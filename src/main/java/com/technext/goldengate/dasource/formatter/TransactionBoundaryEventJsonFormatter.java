@@ -83,18 +83,18 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
             transactionCountByTable.putIfAbsent(tableName.getOriginalName(), 0L);
             transactionCountByTable.computeIfPresent(tableName.getOriginalName(), (k, v) -> v + 1);
         }
-        jsonBuilder.add("xid", xidStr);
-        jsonBuilder.add("csn", csnStr);
-        jsonBuilder.add("tnxBeginTs", transactionBeginTime.toString());
-        jsonBuilder.add("totalOps", totalOps);
+        jsonBuilder.add(TransactionMetaDataType.XID.getValue(), xidStr);
+        jsonBuilder.add(TransactionMetaDataType.CSN.getValue(), csnStr);
+        jsonBuilder.add(TransactionMetaDataType.TX_TS.getValue(), transactionBeginTime.toString());
+        jsonBuilder.add(TransactionMetaDataType.EVENT_COUNT.getValue(), totalOps);
         JsonArrayBuilder arrayBuilder = this.getJsonProvider().createArrayBuilder();
         transactionCountByTable.entrySet().stream().forEach(dsOperation -> {
             JsonObjectBuilder opBuilder = this.getJsonProvider().createObjectBuilder();
-            opBuilder.add("data_collection", dsOperation.getKey());
-            opBuilder.add("event_count", dsOperation.getValue());
+            opBuilder.add(TransactionMetaDataType.DATA_COLLECTION.getValue(), dsOperation.getKey());
+            opBuilder.add(TransactionMetaDataType.EVENT_COUNT.getValue(), dsOperation.getValue());
             arrayBuilder.add(opBuilder);
         });
-        jsonBuilder.add("data_collections", arrayBuilder.build());
+        jsonBuilder.add(TransactionMetaDataType.DATA_COLLECTIONS.getValue(), arrayBuilder.build());
     }
 
 }

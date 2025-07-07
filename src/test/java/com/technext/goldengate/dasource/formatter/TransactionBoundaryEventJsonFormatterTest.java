@@ -74,8 +74,8 @@ public class TransactionBoundaryEventJsonFormatterTest {
         // Verify JSON structure
         assertEquals("TEST-XID-001", json.getString("xid"));
         assertEquals("123456", json.getString("csn"));
-        assertEquals("2023-12-01 10:00:00.000", json.getString("tnxBeginTs"));
-        assertEquals(2, json.getInt("totalOps"));
+        assertEquals("2023-12-01 10:00:00.000", json.getString("tx_ts"));
+        assertEquals(2, json.getInt("event_count"));
 
         // Verify data collections
         assertNotNull(json.getJsonArray("data_collections"));
