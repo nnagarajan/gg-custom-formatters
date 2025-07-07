@@ -9,6 +9,8 @@ import oracle.goldengate.datasource.meta.TableName;
 import oracle.goldengate.format.NgFormattedData;
 import oracle.goldengate.format.json.JsonFormatter;
 import oracle.goldengate.util.DateString;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.json.JsonArrayBuilder;
 import javax.json.JsonObject;
@@ -26,20 +28,28 @@ import java.util.Map;
  */
 public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
 
-    @Override
-    public void formatOp(DsTransaction dsTransaction, DsOperation dsOperation, TableMetaData tableMetaData, NgFormattedData ngFormattedData) {
+    private static final Logger logger = LoggerFactory.getLogger(TransactionBoundaryEventJsonFormatter.class);
 
+    /**
+     * This method is called at the start of a transaction.
+     * It initializes the output stream for formatted data.
+     */
+    @Override
+    public void formatOp(DsTransaction dsTransaction, DsOperation dsOperation, TableMetaData tableMetaData, NgFormattedData output) {
+        if(dsTransaction.getLastOperation().getOperationSeqno()==dsOperation.getOperationSeqno()) {
+            NgBAOSFormattedData formattedData = (NgBAOSFormattedData) output;
+            JsonObjectBuilder jsonBuilder = this.getJsonProvider().createObjectBuilder();
+            formatTransaction(dsTransaction, jsonBuilder);
+            writeJson(jsonBuilder, formattedData);
+        }
     }
 
-    /* * This method is called at the end of a transaction.
-     * It formats the transaction information into JSON and writes it to the output stream.
+    /**
+     * This method is called at the end of a transaction.
+     * It writes the formatted transaction data to the output stream.
      */
     @Override
     public void endTx(DsTransaction dsTransaction, DsMetaData dsMetaData, NgFormattedData output) {
-        NgBAOSFormattedData formattedData = (NgBAOSFormattedData) output;
-        JsonObjectBuilder jsonBuilder = this.getJsonProvider().createObjectBuilder();
-        formatTransaction(dsTransaction, jsonBuilder);
-        writeJson(jsonBuilder, formattedData);
     }
 
     /**
