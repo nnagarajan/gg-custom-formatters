@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.technext</groupId>
+    <artifactId>gg-custom-formatters</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <lib.location>/opt/oracle/ggbd/ggjava/resources/lib</lib.location>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>oracle.goldengate</groupId>
+            <artifactId>ggformatters</artifactId>
+            <version>21.4.0.0.0.002</version>
+            <systemPath>${lib.location}/ggformatters-21.4.0.0.0.002.jar</systemPath>
+            <scope>system</scope>
+        </dependency>
+        <dependency>
+            <groupId>oracle.goldengate</groupId>
+            <artifactId>ggdbutil</artifactId>
+            <version>21.4.0.0.0.002</version>
+            <systemPath>${lib.location}/ggdbutil-21.4.0.0.0.002.jar</systemPath>
+            <scope>system</scope>
+        </dependency>
+        <dependency>
+            <groupId>oracle.goldengate</groupId>
+            <artifactId>ggutil</artifactId>
+            <version>21.4.0.0.0.002</version>
+            <systemPath>${lib.location}/ggutil-21.4.0.0.0.002.jar</systemPath>
+            <scope>system</scope>
+        </dependency>
+        <dependency>
+            <groupId>oracle.goldengate</groupId>
+            <artifactId>ggaddons</artifactId>
+            <version>21.4.0.0.0.002</version>
+            <systemPath>${lib.location}/ggaddons-21.4.0.0.0.002.jar</systemPath>
+            <scope>system</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.json</groupId>
+            <artifactId>jakarta.json</artifactId>
+            <version>1.1.6</version>
+            <systemPath>${lib.location}/jakarta.json-1.1.6.jar</systemPath>
+            <scope>system</scope>
+        </dependency>
+    </dependencies>
+
+</project>
