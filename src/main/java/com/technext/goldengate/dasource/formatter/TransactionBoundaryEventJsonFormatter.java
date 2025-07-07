@@ -37,6 +37,7 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
     @Override
     public void formatOp(DsTransaction dsTransaction, DsOperation dsOperation, TableMetaData tableMetaData, NgFormattedData output) {
         if(dsTransaction.getLastOperation().getOperationSeqno()==dsOperation.getOperationSeqno()) {
+            logger.debug("Formatting transaction boundary event for transaction: {}", dsTransaction.getXidStr());
             NgBAOSFormattedData formattedData = (NgBAOSFormattedData) output;
             JsonObjectBuilder jsonBuilder = this.getJsonProvider().createObjectBuilder();
             formatTransaction(dsTransaction, jsonBuilder);
