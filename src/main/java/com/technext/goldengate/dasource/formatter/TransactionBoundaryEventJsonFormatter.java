@@ -1,5 +1,6 @@
 package com.technext.goldengate.dasource.formatter;
 
+import oracle.goldengate.datasource.DsEvent;
 import oracle.goldengate.datasource.DsOperation;
 import oracle.goldengate.datasource.DsTransaction;
 import oracle.goldengate.datasource.format.NgBAOSFormattedData;
@@ -50,7 +51,13 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
      * It writes the formatted transaction data to the output stream.
      */
     @Override
-    public void endTx(DsTransaction dsTransaction, DsMetaData dsMetaData, NgFormattedData output) {
+    public void endTx(DsTransaction dsTransaction, DsMetaData dsMetaData, NgFormattedData output)  {
+        logger.debug("endTx() not implemented)");
+    }
+
+    @Override
+    public void metaDataChanged(DsEvent e, DsMetaData meta){
+        logger.debug("metaDataChanged() not implemented)");
     }
 
     /**
@@ -80,8 +87,8 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
         Map<String, Long> transactionCountByTable = new HashMap<>();
         for (DsOperation dsOperation : dsTransaction.getOperations()) {
             TableName tableName = dsOperation.getTableName();
-            transactionCountByTable.putIfAbsent(tableName.getOriginalName(), 0L);
-            transactionCountByTable.computeIfPresent(tableName.getOriginalName(), (k, v) -> v + 1);
+            transactionCountByTable.putIfAbsent(tableName.getShortName(), 0L);
+            transactionCountByTable.computeIfPresent(tableName.getShortName(), (k, v) -> v + 1);
         }
         jsonBuilder.add(TransactionMetaDataType.XID.getValue(), xidStr);
         jsonBuilder.add(TransactionMetaDataType.CSN.getValue(), csnStr);

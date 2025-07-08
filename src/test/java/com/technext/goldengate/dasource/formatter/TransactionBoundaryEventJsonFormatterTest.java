@@ -82,7 +82,7 @@ public class TransactionBoundaryEventJsonFormatterTest {
         assertEquals(1, json.getJsonArray("data_collections").size());
 
         JsonObject dataCollection = json.getJsonArray("data_collections").getJsonObject(0);
-        assertEquals("SCHEMA1.TABLE1", dataCollection.getString("data_collection"));
+        assertEquals("TABLE1", dataCollection.getString("data_collection"));
         assertEquals(2, dataCollection.getInt("event_count"));
     }
 }
