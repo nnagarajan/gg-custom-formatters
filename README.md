@@ -10,14 +10,18 @@ The formatter produces JSON output with the following structure:
   "csn": "1234551111",
   "xid": "5.6.641",
   "tx_ts": 1486500577691,
-  "event_count": 2,
+  "event_count": 3,
   "data_collections": [
     {
-      "data_collection": "EMPLOYEE",
+      "data_collection": "ORDERS",
       "event_count": 1
     },
     {
-      "data_collection": "EMPLOYEE_DETAILS",
+      "data_collection": "ORDER_DETAILS",
+      "event_count": 1
+    },
+    {
+      "data_collection": "ORDER_LINE_ITEMS",
       "event_count": 1
     }
   ]
@@ -52,8 +56,9 @@ REPORTCOUNT EVERY 15 SECONDS, RATE
 GROUPTRANSOPS 1000
 --MAXTRANSOPS 1000
 IGNOREDELETES
-MAP ORCLPDB.APPUSER.EMPLOYEE, TARGET APPUSER.EMPLOYEE;
-MAP ORCLPDB.APPUSER.EMPLOYEE_DETAILS, TARGET APPUSER.EMPLOYEE_DETAILS;
+MAP ORCLPDB.APPUSER.ORDERS, TARGET APPUSER.ORDERS;
+MAP ORCLPDB.APPUSER.ORDER_DETAILS, TARGET APPUSER.ORDER_DETAILS;
+MAP ORCLPDB.APPUSER.ORDER_LINE_ITEMS, TARGET APPUSER.ORDER_LINE_ITEMS;
 ```
 
 Example Kafka handler properties ('.props''):
@@ -91,9 +96,10 @@ SET TIMING ON;
 BEGIN
 	FOR I IN  1..50
 	LOOP
-		UPDATE EMPLOYEE SET EMPLOYEE_NAME ='NAVEEN' WHERE EMPLOYEE_ID=248;
-		UPDATE EMPLOYEE_DETAILS SET PNUMBER ='PNUMBER1' WHERE EMPLOYEE_ID=248;
-	END LOOP;	
+		UPDATE ORDERS SET ORDER_STATUS='CONFIRMED' WHERE ORDER_ID=1;
+		UPDATE ORDER_DETAILS SET DELIVERY_STATUS='IN_TRANSIT' WHERE ORDER_ID=1;
+		UPDATE ORDER_LINE_ITEMS SET ITEM_QTY=100 WHERE ORDER_ID=1 AND LINE_ITEM_ID=1;
+	END LOOP;
 END;
 /
 COMMIT;
@@ -106,14 +112,18 @@ Sample output:
   "xid": "1342848513.10.11.105432",
   "csn": "334506722",
   "tx_ts": "2025-07-07 22:34:16.000000",
-  "event_count": 100,
+  "event_count": 150,
   "data_collections": [
     {
-      "data_collection": "EMPLOYEE",
+      "data_collection": "ORDERS",
       "event_count": 50
     },
     {
-      "data_collection": "EMPLOYEE_DETAILS",
+      "data_collection": "ORDER_DETAILS",
+      "event_count": 50
+    },
+    {
+      "data_collection": "ORDER_LINE_ITEMS",
       "event_count": 50
     }
   ]
@@ -127,10 +137,10 @@ SET TIMING ON;
 BEGIN
 	FOR I IN  1..50
 	LOOP
-		UPDATE EMPLOYEE SET EMPLOYEE_NAME ='NAVEEN' WHERE EMPLOYEE_ID=248;
-		UPDATE EMPLOYEE_DETAILS SET PNUMBER ='PNUMBER1' WHERE EMPLOYEE_ID=248;
-	END LOOP;	
-	UPDATE DEPARTMENT SET DEPARTMENT_NAME ='SALES' WHERE DEPARTMENT_ID=10;
+		UPDATE ORDERS SET ORDER_STATUS='CONFIRMED' WHERE ORDER_ID=1;
+		UPDATE ORDER_DETAILS SET DELIVERY_STATUS='IN_TRANSIT' WHERE ORDER_ID=1;
+	END LOOP;
+	UPDATE ORDER_LINE_ITEMS SET ITEM_QTY=200 WHERE ORDER_ID=1 AND LINE_ITEM_ID=1;
 END;
 /
 COMMIT;
@@ -146,12 +156,16 @@ Sample output:
   "event_count": 101,
   "data_collections": [
     {
-      "data_collection": "EMPLOYEE",
+      "data_collection": "ORDERS",
       "event_count": 50
     },
     {
-      "data_collection": "EMPLOYEE_DETAILS",
+      "data_collection": "ORDER_DETAILS",
       "event_count": 50
+    },
+    {
+      "data_collection": "ORDER_LINE_ITEMS",
+      "event_count": 1
     }
   ]
 }
@@ -159,15 +173,16 @@ Sample output:
 
 ### Example 3
 
-Pressure test with 100,000 updates to the same transaction
+Pressure test with 150,000 updates to the same transaction
 
 ```oracle
 SET TIMING ON;
 BEGIN
     FOR I IN  1..50000
         LOOP
-            UPDATE EMPLOYEE SET EMPLOYEE_NAME ='NAVEEN' WHERE EMPLOYEE_ID=248;
-            UPDATE EMPLOYEE_DETAILS SET PNUMBER ='PNUMBER1' WHERE EMPLOYEE_ID=248;
+            UPDATE ORDERS SET ORDER_STATUS='CONFIRMED' WHERE ORDER_ID=1;
+            UPDATE ORDER_DETAILS SET DELIVERY_STATUS='IN_TRANSIT' WHERE ORDER_ID=1;
+            UPDATE ORDER_LINE_ITEMS SET ITEM_QTY=100 WHERE ORDER_ID=1 AND LINE_ITEM_ID=1;
         END LOOP;
 END;
 /
@@ -181,14 +196,18 @@ Sample output:
   "xid": "1342848513.10.11.105432",
   "csn": "334506722",
   "tx_ts": "2025-07-07 22:34:16.000000",
-  "event_count": 10000,
+  "event_count": 150000,
   "data_collections": [
     {
-      "data_collection": "EMPLOYEE",
+      "data_collection": "ORDERS",
       "event_count": 50000
     },
     {
-      "data_collection": "EMPLOYEE_DETAILS",
+      "data_collection": "ORDER_DETAILS",
+      "event_count": 50000
+    },
+    {
+      "data_collection": "ORDER_LINE_ITEMS",
       "event_count": 50000
     }
   ]
