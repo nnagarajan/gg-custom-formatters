@@ -2,31 +2,72 @@
 ## Overview
 This repository contains custom formatters for Oracle GoldenGate that are inspired by the Debezium transaction metadata format. These formatters are designed to provide a structured representation of transactions, including commit sequence numbers (CSN), transaction IDs (XID), timestamps, and event counts.
 
-## Transaction Event Format
-The formatter produces JSON output with the following structure:
+## Contract: one marker per source transaction
+
+The formatter emits **exactly one marker per source transaction (`xid:csn`)**, whose `event_count` and per-table counts equal that transaction's operations. Downstream consumers (the Spark pipeline in `transactional-cdc-processing-spark`) rely on these counts being exact.
+
+With `GROUPTRANSOPS` (default 1000), Replicat accumulates whole source transactions into one delivered transaction. GoldenGate never splits a source transaction, but one delivery can hold several. With `gg.handler.kafkahandler.mode=tx` the Kafka handler sends **one Kafka message per delivery**. The formatter therefore groups the delivered operations by each operation's own `xid:csn`, in trail order:
+
+| Delivery holds | Kafka message |
+|---|---|
+| One source transaction | A single JSON object (unchanged from earlier versions) |
+| Several source transactions | A JSON array of marker objects, in commit order |
+
+- Two transactions with the same `csn` but different `xid` are separate markers.
+- In the single-object form, `xid`, `csn` and `tx_ts` come from the delivered transaction (`tx_ts` is its begin time).
+- In the array form, each marker has its own `xid` and `csn`, and `tx_ts` is the timestamp of that transaction's first operation.
+- `data_collections` lists tables (short names) in the order they first appear.
+- `tx_ts` is a string.
+
+## Message Format
+
+One source transaction:
 
 ```json
 {
-  "csn": "1234551111",
-  "xid": "5.6.641",
-  "tx_ts": 1486500577691,
-  "event_count": 3,
+  "xid": "1342848513.8.14.5716",
+  "csn": "344374437",
+  "tx_ts": "2026-11-07 21:24:36.000000",
+  "event_count": 550,
   "data_collections": [
-    {
-      "data_collection": "ORDERS",
-      "event_count": 1
-    },
-    {
-      "data_collection": "ORDER_DETAILS",
-      "event_count": 1
-    },
-    {
-      "data_collection": "ORDER_LINE_ITEMS",
-      "event_count": 1
-    }
+    { "data_collection": "ORDERS", "event_count": 100 },
+    { "data_collection": "ORDER_DETAILS", "event_count": 100 },
+    { "data_collection": "ORDER_LINE_ITEMS", "event_count": 350 }
   ]
 }
 ```
+
+A grouped delivery of T1 (800 operations) and T2 (500 operations):
+
+```json
+[
+  {
+    "xid": "X1",
+    "csn": "500",
+    "tx_ts": "2026-11-07 21:24:36.000000",
+    "event_count": 800,
+    "data_collections": [
+      { "data_collection": "ORDERS", "event_count": 100 },
+      { "data_collection": "ORDER_DETAILS", "event_count": 100 },
+      { "data_collection": "ORDER_LINE_ITEMS", "event_count": 600 }
+    ]
+  },
+  {
+    "xid": "X2",
+    "csn": "600",
+    "tx_ts": "2026-11-07 21:24:37.000000",
+    "event_count": 500,
+    "data_collections": [
+      { "data_collection": "ORDERS", "event_count": 50 },
+      { "data_collection": "ORDER_DETAILS", "event_count": 50 },
+      { "data_collection": "ORDER_LINE_ITEMS", "event_count": 400 }
+    ]
+  }
+]
+```
+
+Message size: one marker is about 180–280 bytes regardless of how many operations it counts. A grouped message holds at most about `GROUPTRANSOPS` markers (about 276 KB uncompressed at 1000), which is under the broker's default `max.message.bytes` (about 1 MB). If you raise `GROUPTRANSOPS` well above 1000, raise the broker and producer message limits to match.
+
 ## Configuration
 
 ### 1. Kafka Handler Integration
@@ -60,6 +101,8 @@ MAP ORCLPDB.APPUSER.ORDERS, TARGET APPUSER.ORDERS;
 MAP ORCLPDB.APPUSER.ORDER_DETAILS, TARGET APPUSER.ORDER_DETAILS;
 MAP ORCLPDB.APPUSER.ORDER_LINE_ITEMS, TARGET APPUSER.ORDER_LINE_ITEMS;
 ```
+
+> **`MAXTRANSOPS` must stay unset.** It splits a large source transaction across several deliveries, so the formatter would emit partial markers whose counts never match the source transaction. Splitting is not supported. Keep the `--MAXTRANSOPS` line commented out. `GROUPTRANSOPS` is supported: it only groups whole source transactions.
 
 Example Kafka handler properties ('.props''):
 
