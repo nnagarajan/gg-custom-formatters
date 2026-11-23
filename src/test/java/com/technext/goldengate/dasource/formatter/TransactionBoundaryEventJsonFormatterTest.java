@@ -380,7 +380,9 @@ public class TransactionBoundaryEventJsonFormatterTest {
     public void keyColumnFileThatDoesNotExistFailsAtStartup() {
         String path = tmp.getRoot().getAbsolutePath() + "/nope.properties";
 
-        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.setKeyColumnsFile(path));
+        formatter.setKeyColumnsFile(path);
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.init(null, null));
 
         assertTrue(e.getMessage(), e.getMessage().contains(path));
     }
@@ -389,7 +391,9 @@ public class TransactionBoundaryEventJsonFormatterTest {
     public void malformedKeyColumnFileFailsAtStartupNamingTheLine() throws IOException {
         String path = keyFile("APPUSER.ORDERS=ORDER_ID", "APPUSER.ORDER_LINE_ITEMS=ORDER_ID,,LINE_NO");
 
-        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.setKeyColumnsFile(path));
+        formatter.setKeyColumnsFile(path);
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.init(null, null));
 
         assertTrue(e.getMessage(), e.getMessage().contains(path));
         assertTrue(e.getMessage(), e.getMessage().contains("line 2"));
@@ -399,7 +403,9 @@ public class TransactionBoundaryEventJsonFormatterTest {
     public void keyColumnFileLineWithoutColumnsFailsAtStartup() throws IOException {
         String path = keyFile("APPUSER.ORDERS=");
 
-        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.setKeyColumnsFile(path));
+        formatter.setKeyColumnsFile(path);
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.init(null, null));
 
         assertTrue(e.getMessage(), e.getMessage().contains("line 1"));
     }
@@ -490,6 +496,44 @@ public class TransactionBoundaryEventJsonFormatterTest {
         assertThrows(IllegalStateException.class, () -> formatter.formatOp(tx, ops.get(1), mock(TableMetaData.class), output));
 
         assertEquals(0, output.getByteArrayOutputStream(0).size());
+    }
+
+    @Test
+    public void settingThePathDoesNotReadTheFile() {
+        formatter.setKeyColumnsFile(tmp.getRoot().getAbsolutePath() + "/nope.properties");
+    }
+
+    @Test
+    public void keysOffDoesNotReadTheKeyColumnFile() {
+        // path before flag: GoldenGate may set properties in any order
+        formatter.setKeyColumnsFile(tmp.getRoot().getAbsolutePath() + "/nope.properties");
+        formatter.setMarkerKeys("false");
+        formatter.init(null, null);
+
+        JsonObject dc = collection(twoOrders(), "ORDERS");
+
+        assertEquals(new HashSet<>(Arrays.asList("data_collection", "event_count", "pos")), dc.keySet());
+    }
+
+    @Test
+    public void keysOffDoesNotReadTheKeyColumnFileFlagFirst() {
+        formatter.setMarkerKeys("false");
+        formatter.setKeyColumnsFile(tmp.getRoot().getAbsolutePath() + "/nope.properties");
+        formatter.init(null, null);
+
+        assertEquals(2, collection(twoOrders(), "ORDERS").getInt("event_count"));
+    }
+
+    @Test
+    public void keyColumnFileIsReadOnFirstDeliveryWhenInitWasNotCalled() throws IOException {
+        String missing = tmp.getRoot().getAbsolutePath() + "/nope.properties";
+        formatter.setKeyColumnsFile(missing);
+        List<DsOperation> ops = new ArrayList<>();
+        ops.add(op("X1", "500", ORDERS));
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> format(delivered("X1", "500", ops)));
+
+        assertMessage(e, "Cannot read key column file", missing);
     }
 
     @Test
@@ -609,6 +653,105 @@ public class TransactionBoundaryEventJsonFormatterTest {
 
         assertTrue(markers.getJsonObject(0).getBoolean("tx_complete"));
         assertTrue(markers.getJsonObject(1).getBoolean("tx_complete"));
+    }
+
+    // ---- markerKeys / markerPos ----
+
+    private static final Set<String> MARKER_FIELDS =
+            new HashSet<>(Arrays.asList("xid", "csn", "tx_ts", "event_count", "tx_complete", "data_collections"));
+
+    private JsonObject twoOrders() {
+        List<DsOperation> ops = new ArrayList<>();
+        ops.add(keyedOp("X1", "500", ORDERS, OpType.DO_INSERT, meta(ORDER_COLS, "ORDER_ID"), insert("101"), insert("NEW")));
+        ops.add(keyedOp("X1", "500", ORDERS, OpType.DO_INSERT, meta(ORDER_COLS, "ORDER_ID"), insert("102"), insert("NEW")));
+        return (JsonObject) format(delivered("X1", "500", ops));
+    }
+
+    @Test
+    public void keysAndPosAreOnByDefault() {
+        JsonObject dc = collection(twoOrders(), "ORDERS");
+
+        assertEquals(json("[['101'],['102']]"), dc.getJsonArray("key_ids"));
+        assertEquals(json("['" + pos(1) + "','" + pos(2) + "']"), dc.getJsonArray("pos"));
+    }
+
+    @Test
+    public void markerKeysFalseLeavesOutKeyFields() {
+        formatter.setMarkerKeys("false");
+
+        JsonObject marker = twoOrders();
+        JsonObject dc = collection(marker, "ORDERS");
+
+        assertEquals(MARKER_FIELDS, marker.keySet());
+        assertEquals(new HashSet<>(Arrays.asList("data_collection", "event_count", "pos")), dc.keySet());
+        assertEquals(2, dc.getInt("event_count"));
+        assertEquals(json("['" + pos(1) + "','" + pos(2) + "']"), dc.getJsonArray("pos"));
+    }
+
+    @Test
+    public void markerPosFalseLeavesOutPos() {
+        formatter.setMarkerPos("false");
+
+        JsonObject dc = collection(twoOrders(), "ORDERS");
+
+        assertEquals(new HashSet<>(Arrays.asList("data_collection", "event_count", "key_columns", "key_ids")), dc.keySet());
+        assertEquals(json("[['101'],['102']]"), dc.getJsonArray("key_ids"));
+    }
+
+    @Test
+    public void bothOffLeavesOnlyCounts() {
+        formatter.setMarkerKeys("false");
+        formatter.setMarkerPos("false");
+
+        JsonObject marker = twoOrders();
+        JsonObject dc = collection(marker, "ORDERS");
+
+        assertEquals(MARKER_FIELDS, marker.keySet());
+        assertEquals(new HashSet<>(Arrays.asList("data_collection", "event_count")), dc.keySet());
+        assertEquals(2, dc.getInt("event_count"));
+    }
+
+    @Test
+    public void markerKeysFalseSkipsKeyChecks() {
+        formatter.setMarkerKeys("false");
+        List<DsOperation> ops = new ArrayList<>();
+        // no primary key, and a NULL in what would be the key
+        ops.add(keyedOp("X1", "500", ORDERS, OpType.DO_INSERT, meta(ORDER_COLS), insert(null), insert("NEW")));
+
+        JsonObject dc = collection((JsonObject) format(delivered("X1", "500", ops)), "ORDERS");
+
+        assertEquals(json("['" + pos(1) + "']"), dc.getJsonArray("pos"));
+    }
+
+    @Test
+    public void markerKeysFalseStillAbendsOnTruncate() {
+        formatter.setMarkerKeys("false");
+        formatter.setMarkerPos("false");
+        List<DsOperation> ops = new ArrayList<>();
+        ops.add(keyedOp("X1", "500", ORDERS, OpType.DO_TRUNCATE, meta(ORDER_COLS, "ORDER_ID")));
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> format(delivered("X1", "500", ops)));
+
+        assertMessage(e, "APPUSER.ORDERS", "DO_TRUNCATE", "truncates must not be captured");
+    }
+
+    @Test
+    public void flagValuesAreCaseInsensitiveAndTrimmed() {
+        formatter.setMarkerKeys(" FALSE ");
+        formatter.setMarkerPos("True");
+
+        JsonObject dc = collection(twoOrders(), "ORDERS");
+
+        assertEquals(new HashSet<>(Arrays.asList("data_collection", "event_count", "pos")), dc.keySet());
+    }
+
+    @Test
+    public void invalidFlagValueFailsAtStartup() {
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> formatter.setMarkerKeys("no"));
+        assertMessage(e, "markerKeys", "'no'", "true or false");
+
+        e = assertThrows(IllegalStateException.class, () -> formatter.setMarkerPos(""));
+        assertMessage(e, "markerPos", "true or false");
     }
 
     private static DsOperation notLast(DsOperation op) {

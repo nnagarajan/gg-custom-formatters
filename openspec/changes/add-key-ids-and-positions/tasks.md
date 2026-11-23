@@ -6,6 +6,8 @@
 
 ## 2. Spike: GoldenGate behavior under MAXTRANSOPS (manual, in the GoldenGate environment)
 
+_Skipped by user decision. Most of its questions were answered on rep3 on 2026-11-23 with the real formatter; see design.md "Observed on rep3". Left unchecked because the debug formatter was never built._
+
 - [ ] 2.1 Build a throwaway debug formatter (not committed) that logs, per operation, `getXidStr`, `getCsnStr`, `getPosition`, `getTxState`, `isLast`, operation type, `TableName.getSchemaName/getShortName/getOriginalName`, and for each key column `hasBeforeValue/hasAfterValue/isMissing/isValueNull`; and per delivery `getXidStr`, `getCsnStr`, `getNextTranID`, `isTxEndTimeSet`, operation count. Add a setter `setKeyColumnsFile` that logs its argument and throws when the argument is `"throw"`. Verify it loads in rep3 by its log lines.
 - [ ] 2.2 Run rep3 with `MAXTRANSOPS 2`, `GROUPTRANSOPS 1000` and `gg.handler.kafkahandler.format.keyColumnsFile=dirprm/x.properties`; on the source run T1 = 5 inserts on ORDER_LINE_ITEMS, T2 = 1 insert, T3 = 1 insert, then T4 = an update on ORDERS that does not touch ORDER_ID. Verify from the log: fragments carry T1's source xid/csn; which signal (`TxState`, `isLast`, `getNextTranID`) marks T1's last operation and T2/T3 as complete; that T4's key is in the before image; that the setter receives the property value.
 - [ ] 2.3 Set the property to `throw`, restart rep3, and verify Replicat abends (record the report file error). Then make the debug formatter throw from `formatOp` and verify Replicat abends and restarts at the same position.
@@ -30,7 +32,26 @@
 - [x] 5.2 Implement per design.md Decision 2: every group except the delivery's last gets `tx_complete` true; the last group's value comes from the chosen signal; write `tx_complete` after `event_count`. Update the class Javadoc to describe fragments and `tx_complete`. Verify all tests pass with `mvn test`.
 - [x] 5.3 Update README: replace the "`MAXTRANSOPS` must stay unset" rule with `MAXTRANSOPS` support, fragment semantics (`event_count` per delivery, merge by `xid:csn` until `tx_complete` true, dedupe by `pos` after restarts), the size bound per `MAXTRANSOPS`, and the rollout order (deploy jar first, enable `MAXTRANSOPS` only after the consumer handles fragments). Verify the replicat example and JSON examples are valid.
 
+## 7. Selectable marker fields
+
+- [x] 7.1 Write tests for "Positions only", "Keys only", "Both off", "Keys off skips key checks", "Keys off still rejects truncates", "Invalid flag value", plus defaults and case-insensitive values.
+- [x] 7.2 Implement `setMarkerKeys` / `setMarkerPos` per design.md Decision 9; move the truncate check to `KeyColumnResolver.checkSupported` so it runs with keys off. Verify all tests pass with `mvn test`.
+- [x] 7.3 Update README: the two properties in the `rep3.props` example, a Marker Fields section with the field combinations, and the abend table. Note in the sample key column file that it applies only with `markerKeys=true`.
+- [x] 7.4 Read the key column file only when `markerKeys=true`: `setKeyColumnsFile` stores the path, `init` loads it (fallback on first delivery). Tests: keys off with a missing file starts and formats in either property order; missing/malformed file fails in `init`; fallback load when `init` is not called.
+
 ## 6. Integration check
 
 - [x] 6.1 Run `mvn clean package` and verify all tests pass and `target/gg-custom-formatters-1.0-SNAPSHOT.jar` is produced with no `pom.xml` changes; run `openspec validate add-key-ids-and-positions` and verify it passes.
-- [ ] 6.2 Deploy to rep3 with `MAXTRANSOPS` unset and the key column file configured; run one multi-table transaction and verify the Kafka message has `key_columns`, `key_ids`, `pos` matching the data messages' `pos`, and `tx_complete` true. Then (after the consumer is ready) set `MAXTRANSOPS 2`, run a 5-operation transaction and verify three markers with `tx_complete` false, false, true whose `pos` lists together cover all 5 operations once.
+- [ ] 6.2 Deploy to rep3 with `MAXTRANSOPS` unset and the key column file configured; run one multi-table transaction and verify the Kafka message has `key_columns`, `key_ids`, `pos` matching the data messages' `pos`, and `tx_complete` true. Then (after the consumer is ready) set `MAXTRANSOPS 2`, run a 5-operation transaction and verify three markers with `tx_complete` false, false, true whose `pos` lists together cover all 5 operations once. Also verify the rep3 log shows `Loaded key column file ...` at startup (confirms `init`), and that `markerKeys=false` (with `keyColumnsFile` still set) drops `key_columns`/`key_ids` and logs that the file is not read.
+- [ ] 6.3 With `markerKeys=true` and `markerPos=true`, run a 550-operation transaction on rep3 without any abend and verify 275 markers of 2 operations, `tx_complete` false … true, whose `pos` lists cover all 550 operations once. (Done on 2026-11-23 with both flags false; the keys-on run abended on the first fragment because of a wrong key file entry.)
+- [ ] 6.4 Enable formatter logging on rep3 (`-Dlog4j.configurationFile` with a `com.technext` logger, see README) and verify `Loaded key column file ...` appears at startup, confirming `init` is called.
+
+## 8. Caveats and operational follow-ups
+
+- [x] 8.1 Document the caveats in README: Caveats at a glance, Kafka Producer Settings (fixed key or 1-partition topic, `kp.properties`), Consumer Guide (merge by `xid:csn`, deduplicate by `pos`, replay overlap), Capacity Planning (measured sizes, daily volume, bulk transactions), the research result that no GoldenGate parameter applies `MAXTRANSOPS` to a replay, and the `VERSION`-in-key caveat.
+- [ ] 8.2 On rep3: set `gg.handler.kafkahandler.keyMappingTemplate` to a fixed value (or recreate the topic with 1 partition) and apply the recommended `kp.properties`; verify markers show a non-null key and one partition.
+- [ ] 8.3 On rep3: start a large transaction with `MAXTRANSOPS 2`, `KILL REPLICAT rep3` after several fragments are published, restart, and record whether Replicat resumes in the middle (and splits the rest) or replays the whole transaction. Update README and design Decision 11.
+- [ ] 8.4 Measure the transaction size distribution (average, p99, max) from the topic with the README `jq` command, including the largest bulk affirm/confirm; set `MAXTRANSOPS` and the Kafka size limits from it.
+- [ ] 8.5 Ask the trading application team whether bulk affirm/confirm must be one database transaction or can commit in chunks.
+- [ ] 8.6 Consumer team: implement fragment merging and `pos` deduplication per the README Consumer Guide, including the whole-transaction replay case, before `MAXTRANSOPS` is enabled in production.
+- [ ] 8.7 Decide whether a hard marker size bound is required; if so, propose a custom handler change (design Decision 11).

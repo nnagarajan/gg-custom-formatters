@@ -90,11 +90,7 @@ final class KeyColumnResolver {
 
     /** The operation's table key, resolving and validating it on first sight of the table. */
     TableKey resolve(DsOperation op) {
-        if (op.getOperationType() != null && op.getOperationType().isTruncate()) {
-            throw new IllegalStateException("Unsupported operation " + op.getOperationType().name() + " on "
-                    + qualifiedName(op.getTableName()) + " pos=" + op.getPosition()
-                    + ": truncates must not be captured (GETTRUNCATES)");
-        }
+        checkSupported(op);
         String table = qualifiedName(op.getTableName());
         TableKey key = cache.get(table);
         if (key == null) {
@@ -104,6 +100,15 @@ final class KeyColumnResolver {
             cache.put(table, key);
         }
         return key;
+    }
+
+    /** Throws for operations the markers cannot describe: truncates (GETTRUNCATES must be off). */
+    static void checkSupported(DsOperation op) {
+        if (op.getOperationType() != null && op.getOperationType().isTruncate()) {
+            throw new IllegalStateException("Unsupported operation " + op.getOperationType().name() + " on "
+                    + qualifiedName(op.getTableName()) + " pos=" + op.getPosition()
+                    + ": truncates must not be captured (GETTRUNCATES)");
+        }
     }
 
     /** Forgets every resolved key, so the next operation on each table resolves it again (after DDL). */
