@@ -21,40 +21,83 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Formats transaction boundary (marker) events: per source transaction, its xid, csn, timestamp,
- * total operation count and operation count per table. Inspired by Debezium transaction metadata:
+ * operation count, whether it is complete, and per table its operation count, key columns, and each
+ * operation's key values and trail position. Inspired by Debezium transaction metadata:
  * https://debezium.io/documentation/reference/stable/connectors/oracle.html#oracle-transaction-metadata
  *
- * <h2>Contract: exactly one marker per source transaction</h2>
+ * <h2>Contract: one marker per source transaction per delivery</h2>
  *
  * With {@code GROUPTRANSOPS} (default 1000), Replicat accumulates whole source transactions into
  * one delivered {@link DsTransaction}, whose own xid/csn are those of the first source transaction.
- * GoldenGate never splits a source transaction across deliveries (unless {@code MAXTRANSOPS} is
- * set, which is not supported). In {@code gg.handler.kafkahandler.mode=tx} the Kafka handler calls
- * {@link #formatOp} once per operation and sends one Kafka message per {@link DsTransaction}.
+ * With {@code MAXTRANSOPS}, Replicat also splits a large source transaction across deliveries; each
+ * delivery then holds a fragment of it. In {@code gg.handler.kafkahandler.mode=tx} the Kafka handler
+ * calls {@link #formatOp} once per operation and sends one Kafka message per {@link DsTransaction}.
  *
  * <p>The formatter groups the delivered operations by their own source {@code xid:csn}
  * ({@link DsOperation#getXidStr()}, {@link DsOperation#getCsnStr()}), in trail order, and writes
  * one marker per group when it sees the delivery's last operation:
  * <ul>
- *   <li>One source transaction: the message is a single JSON object (as before).</li>
- *   <li>Several source transactions: the message is a JSON array of marker objects, in commit
- *       order, each with its own xid, csn and {@code tx_ts} (its first operation's timestamp).</li>
+ *   <li>One group: the message is a single JSON object.</li>
+ *   <li>Several groups: the message is a JSON array of marker objects, in commit order, each with
+ *       its own xid, csn and {@code tx_ts} (its first operation's timestamp).</li>
  * </ul>
+ * A marker's {@code event_count} counts its source transaction's operations in this delivery.
+ * {@code tx_complete} is false only for the delivery's last group when the delivery's last operation
+ * does not end its source transaction ({@link DsOperation#isLast()}); the transaction then continues
+ * in the next delivery under the same xid:csn.
+ *
+ * <p>Keys come from {@link KeyColumnResolver}. Any operation whose key cannot be produced makes
+ * {@link #formatOp} throw before anything is written, so Replicat abends.
  */
 public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
 
     private static final Logger logger = LoggerFactory.getLogger(TransactionBoundaryEventJsonFormatter.class);
 
+    private final KeyColumnResolver keys;
+
+    public TransactionBoundaryEventJsonFormatter() {
+        this(logger::warn);
+    }
+
+    /** For tests: warnings go to {@code warnings} instead of the log. */
+    TransactionBoundaryEventJsonFormatter(Consumer<String> warnings) {
+        this.keys = new KeyColumnResolver(warnings);
+    }
+
+    /**
+     * Bound by GoldenGate from {@code gg.handler.<name>.format.keyColumnsFile}: a file of
+     * {@code SCHEMA.TABLE=COL1,COL2} lines that overrides tables' primary keys. A missing or malformed
+     * file throws, so Replicat fails at startup.
+     */
+    public void setKeyColumnsFile(String path) {
+        try {
+            keys.loadMapping(path);
+            logger.info("Loaded key column file {}", path);
+        } catch (IllegalStateException e) {
+            logger.error(e.getMessage());
+            throw e;
+        }
+    }
+
     /**
      * Called by the handler for each operation; writes the marker(s) once, on the delivery's last operation.
+     * Throws {@link IllegalStateException}, before writing anything, when an operation's key cannot be
+     * produced; Replicat then abends.
      */
     @Override
     public void formatOp(DsTransaction dsTransaction, DsOperation dsOperation, TableMetaData tableMetaData, NgFormattedData output) {
         if (dsTransaction.getLastOperation().getOperationSeqno() == dsOperation.getOperationSeqno()) {
-            List<JsonObject> markers = buildMarkers(dsTransaction);
+            List<JsonObject> markers;
+            try {
+                markers = buildMarkers(dsTransaction);
+            } catch (IllegalStateException e) {
+                logger.error(e.getMessage());
+                throw e;
+            }
             logger.debug("Formatting {} transaction boundary event(s) for transaction: {}", markers.size(), dsTransaction.getXidStr());
             writeJson(markers, (NgBAOSFormattedData) output);
         }
@@ -69,9 +112,11 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
         logger.debug("endTx() not implemented");
     }
 
+    /** Table metadata changed (for example after DDL): resolve and validate every table's key again. */
     @Override
     public void metaDataChanged(DsEvent e, DsMetaData meta) {
-        logger.debug("metaDataChanged() not implemented");
+        logger.debug("metaDataChanged(): clearing resolved key columns");
+        keys.clear();
     }
 
     /** One marker per source transaction in the delivered transaction, in trail order. */
@@ -80,35 +125,51 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
         for (DsOperation op : dsTransaction.getOperations()) {
             String xid = op.getXidStr() != null ? op.getXidStr() : dsTransaction.getXidStr();
             String csn = op.getCsnStr() != null ? op.getCsnStr() : dsTransaction.getCsnStr();
+            KeyColumnResolver.TableKey key = keys.resolve(op);
+            List<String> keyValues = keys.values(op, key);
             SourceTx tx = groups.computeIfAbsent(xid + ":" + csn, k -> new SourceTx(xid, csn, op.getTimestamp()));
-            tx.add(op.getTableName().getShortName());
+            tx.add(op.getTableName().getShortName(), key.names, keyValues, op.getPosition());
         }
 
+        // MAXTRANSOPS splits only at delivery boundaries, so every group but the last ends in this
+        // delivery. The last one is complete when the delivery's last operation ends its source transaction.
+        boolean lastComplete = dsTransaction.getLastOperation().isLast();
         List<JsonObject> markers = new ArrayList<>(groups.size());
         if (groups.size() == 1) {
             // Single source transaction: keep the delivery-level values used before grouping support.
             SourceTx only = groups.values().iterator().next();
             markers.add(toJson(dsTransaction.getXidStr(), dsTransaction.getCsnStr(),
-                    dsTransaction.getTransactionBeginTime(), only));
+                    dsTransaction.getTransactionBeginTime(), lastComplete, only));
         } else {
+            int i = 0;
             for (SourceTx tx : groups.values()) {
-                markers.add(toJson(tx.xid, tx.csn, tx.timestamp, tx));
+                boolean complete = ++i < groups.size() || lastComplete;
+                markers.add(toJson(tx.xid, tx.csn, tx.timestamp, complete, tx));
             }
         }
         return markers;
     }
 
-    private JsonObject toJson(String xid, String csn, DateString txTs, SourceTx tx) {
+    private JsonObject toJson(String xid, String csn, DateString txTs, boolean complete, SourceTx tx) {
         JsonObjectBuilder jsonBuilder = this.getJsonProvider().createObjectBuilder();
         jsonBuilder.add(TransactionMetaDataType.XID.getValue(), xid);
         jsonBuilder.add(TransactionMetaDataType.CSN.getValue(), csn);
         jsonBuilder.add(TransactionMetaDataType.TX_TS.getValue(), txTs == null ? "" : txTs.toString());
         jsonBuilder.add(TransactionMetaDataType.EVENT_COUNT.getValue(), tx.total);
+        jsonBuilder.add(TransactionMetaDataType.TX_COMPLETE.getValue(), complete);
         JsonArrayBuilder arrayBuilder = this.getJsonProvider().createArrayBuilder();
-        for (Map.Entry<String, Long> e : tx.countByTable.entrySet()) {
+        for (Map.Entry<String, TableOps> e : tx.byTable.entrySet()) {
+            TableOps t = e.getValue();
             JsonObjectBuilder opBuilder = this.getJsonProvider().createObjectBuilder();
             opBuilder.add(TransactionMetaDataType.DATA_COLLECTION.getValue(), e.getKey());
-            opBuilder.add(TransactionMetaDataType.EVENT_COUNT.getValue(), e.getValue());
+            opBuilder.add(TransactionMetaDataType.EVENT_COUNT.getValue(), t.positions.size());
+            opBuilder.add(TransactionMetaDataType.KEY_COLUMNS.getValue(), stringArray(t.keyColumns));
+            JsonArrayBuilder keyIds = this.getJsonProvider().createArrayBuilder();
+            for (List<String> keyValues : t.keyIds) {
+                keyIds.add(stringArray(keyValues));
+            }
+            opBuilder.add(TransactionMetaDataType.KEY_IDS.getValue(), keyIds);
+            opBuilder.add(TransactionMetaDataType.POS.getValue(), stringArray(t.positions));
             arrayBuilder.add(opBuilder);
         }
         jsonBuilder.add(TransactionMetaDataType.DATA_COLLECTIONS.getValue(), arrayBuilder.build());
@@ -134,12 +195,20 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
         jsonWriter.write(json);
     }
 
+    private JsonArrayBuilder stringArray(List<String> values) {
+        JsonArrayBuilder array = this.getJsonProvider().createArrayBuilder();
+        for (String v : values) {
+            array.add(v == null ? "" : v);
+        }
+        return array;
+    }
+
     /** Operations of one source transaction within the delivered transaction. */
     private static final class SourceTx {
         final String xid;
         final String csn;
         final DateString timestamp;
-        final Map<String, Long> countByTable = new LinkedHashMap<>();
+        final Map<String, TableOps> byTable = new LinkedHashMap<>();
         int total;
 
         SourceTx(String xid, String csn, DateString timestamp) {
@@ -148,9 +217,28 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
             this.timestamp = timestamp;
         }
 
-        void add(String table) {
-            countByTable.merge(table, 1L, Long::sum);
+        void add(String table, List<String> keyColumns, List<String> keyValues, String position) {
+            byTable.computeIfAbsent(table, k -> new TableOps(keyColumns)).add(keyValues, position);
             total++;
+        }
+    }
+
+    /**
+     * One table's operations within a source transaction, in trail order. Keys and positions are
+     * appended together, so their lengths always equal the table's operation count.
+     */
+    private static final class TableOps {
+        final List<String> keyColumns;
+        final List<List<String>> keyIds = new ArrayList<>();
+        final List<String> positions = new ArrayList<>();
+
+        TableOps(List<String> keyColumns) {
+            this.keyColumns = keyColumns;
+        }
+
+        void add(List<String> keyValues, String position) {
+            keyIds.add(keyValues);
+            positions.add(position);
         }
     }
 }

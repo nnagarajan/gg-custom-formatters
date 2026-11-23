@@ -1,0 +1,305 @@
+{
+    "version": "1.4.0",
+    "project": {
+        "name": "gg-custom-formatters-test",
+        "directory": "/home/nnagarajan/github/gg-custom-formatters1",
+        "workspaceDir": "/home/nnagarajan/github/gg-custom-formatters1",
+        "sources": [
+            "/home/nnagarajan/github/gg-custom-formatters1/src/test/java"
+        ],
+        "dependencies": [
+            "gg-custom-formatters"
+        ],
+        "classpath": [
+            "/home/nnagarajan/github/gg-custom-formatters1/target/test-classes",
+            "/home/nnagarajan/github/gg-custom-formatters1/target/classes",
+            "/opt/oracle/ggbd/ggjava/resources/lib/ggformatters-21.4.0.0.0.002.jar",
+            "/opt/oracle/ggbd/ggjava/resources/lib/ggdbutil-21.4.0.0.0.002.jar",
+            "/opt/oracle/ggbd/ggjava/resources/lib/ggutil-21.4.0.0.0.002.jar",
+            "/opt/oracle/ggbd/ggjava/resources/lib/ggaddons-21.4.0.0.0.002.jar",
+            "/opt/oracle/ggbd/ggjava/resources/lib/jakarta.json-1.1.6.jar",
+            "/home/nnagarajan/.m2/repository/org/slf4j/slf4j-api/1.7.30/slf4j-api-1.7.30.jar",
+            "/home/nnagarajan/.m2/repository/junit/junit/4.13.1/junit-4.13.1.jar",
+            "/home/nnagarajan/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar",
+            "/home/nnagarajan/.m2/repository/org/mockito/mockito-core/3.12.4/mockito-core-3.12.4.jar",
+            "/home/nnagarajan/.m2/repository/net/bytebuddy/byte-buddy/1.11.13/byte-buddy-1.11.13.jar",
+            "/home/nnagarajan/.m2/repository/net/bytebuddy/byte-buddy-agent/1.11.13/byte-buddy-agent-1.11.13.jar",
+            "/home/nnagarajan/.m2/repository/org/objenesis/objenesis/3.2/objenesis-3.2.jar",
+            "/home/nnagarajan/.m2/repository/com/github/sbt/junit-interface/0.13.3/junit-interface-0.13.3.jar"
+        ],
+        "out": "/home/nnagarajan/github/gg-custom-formatters1/target",
+        "classesDir": "/home/nnagarajan/github/gg-custom-formatters1/target/test-classes",
+        "resources": [
+            
+        ],
+        "java": {
+            "options": [
+                "-g",
+                "-target",
+                "8",
+                "-source",
+                "8",
+                "-encoding",
+                "UTF-8"
+            ]
+        },
+        "test": {
+            "frameworks": [
+                {
+                    "names": [
+                        "com.novocode.junit.JUnitFramework"
+                    ]
+                },
+                {
+                    "names": [
+                        "org.scalatest.tools.Framework",
+                        "org.scalatest.tools.ScalaTestFramework"
+                    ]
+                },
+                {
+                    "names": [
+                        "org.scalacheck.ScalaCheckFramework"
+                    ]
+                },
+                {
+                    "names": [
+                        "org.specs.runner.SpecsFramework",
+                        "org.specs2.runner.Specs2Framework",
+                        "org.specs2.runner.SpecsFramework"
+                    ]
+                },
+                {
+                    "names": [
+                        "utest.runner.Framework"
+                    ]
+                },
+                {
+                    "names": [
+                        "munit.Framework"
+                    ]
+                },
+                {
+                    "names": [
+                        "mill.testng.TestNGFramework"
+                    ]
+                }
+            ],
+            "options": {
+                "excludes": [
+                    
+                ],
+                "arguments": [
+                    {
+                        "args": [
+                            "-v",
+                            "-a"
+                        ],
+                        "framework": {
+                            "names": [
+                                "com.novocode.junit.JUnitFramework"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "platform": {
+            "name": "jvm",
+            "config": {
+                "home": "/usr/lib/jvm/java-17-openjdk-17.0.21.0.9-2.2.el9_8.x86_64",
+                "options": [
+                    
+                ]
+            },
+            "mainClass": [
+                
+            ]
+        },
+        "resolution": {
+            "modules": [
+                {
+                    "organization": "oracle.goldengate",
+                    "name": "ggaddons",
+                    "version": "21.4.0.0.0.002",
+                    "artifacts": [
+                        {
+                            "name": "ggaddons",
+                            "path": "/opt/oracle/ggbd/ggjava/resources/lib/ggaddons-21.4.0.0.0.002.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "oracle.goldengate",
+                    "name": "ggformatters",
+                    "version": "21.4.0.0.0.002",
+                    "artifacts": [
+                        {
+                            "name": "ggformatters",
+                            "path": "/opt/oracle/ggbd/ggjava/resources/lib/ggformatters-21.4.0.0.0.002.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "org.hamcrest",
+                    "name": "hamcrest-core",
+                    "version": "1.3",
+                    "artifacts": [
+                        {
+                            "name": "hamcrest-core",
+                            "path": "/home/nnagarajan/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar"
+                        },
+                        {
+                            "name": "hamcrest-core",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "oracle.goldengate",
+                    "name": "ggdbutil",
+                    "version": "21.4.0.0.0.002",
+                    "artifacts": [
+                        {
+                            "name": "ggdbutil",
+                            "path": "/opt/oracle/ggbd/ggjava/resources/lib/ggdbutil-21.4.0.0.0.002.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "org.mockito",
+                    "name": "mockito-core",
+                    "version": "3.12.4",
+                    "artifacts": [
+                        {
+                            "name": "mockito-core",
+                            "path": "/home/nnagarajan/.m2/repository/org/mockito/mockito-core/3.12.4/mockito-core-3.12.4.jar"
+                        },
+                        {
+                            "name": "mockito-core",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/org/mockito/mockito-core/3.12.4/mockito-core-3.12.4-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "net.bytebuddy",
+                    "name": "byte-buddy-agent",
+                    "version": "1.11.13",
+                    "artifacts": [
+                        {
+                            "name": "byte-buddy-agent",
+                            "path": "/home/nnagarajan/.m2/repository/net/bytebuddy/byte-buddy-agent/1.11.13/byte-buddy-agent-1.11.13.jar"
+                        },
+                        {
+                            "name": "byte-buddy-agent",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/net/bytebuddy/byte-buddy-agent/1.11.13/byte-buddy-agent-1.11.13-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "org.objenesis",
+                    "name": "objenesis",
+                    "version": "3.2",
+                    "artifacts": [
+                        {
+                            "name": "objenesis",
+                            "path": "/home/nnagarajan/.m2/repository/org/objenesis/objenesis/3.2/objenesis-3.2.jar"
+                        },
+                        {
+                            "name": "objenesis",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/org/objenesis/objenesis/3.2/objenesis-3.2-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "junit",
+                    "name": "junit",
+                    "version": "4.13.1",
+                    "artifacts": [
+                        {
+                            "name": "junit",
+                            "path": "/home/nnagarajan/.m2/repository/junit/junit/4.13.1/junit-4.13.1.jar"
+                        },
+                        {
+                            "name": "junit",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/junit/junit/4.13.1/junit-4.13.1-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "jakarta.json",
+                    "name": "jakarta.json",
+                    "version": "1.1.6",
+                    "artifacts": [
+                        {
+                            "name": "jakarta.json",
+                            "path": "/opt/oracle/ggbd/ggjava/resources/lib/jakarta.json-1.1.6.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "net.bytebuddy",
+                    "name": "byte-buddy",
+                    "version": "1.11.13",
+                    "artifacts": [
+                        {
+                            "name": "byte-buddy",
+                            "path": "/home/nnagarajan/.m2/repository/net/bytebuddy/byte-buddy/1.11.13/byte-buddy-1.11.13.jar"
+                        },
+                        {
+                            "name": "byte-buddy",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/net/bytebuddy/byte-buddy/1.11.13/byte-buddy-1.11.13-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "oracle.goldengate",
+                    "name": "ggutil",
+                    "version": "21.4.0.0.0.002",
+                    "artifacts": [
+                        {
+                            "name": "ggutil",
+                            "path": "/opt/oracle/ggbd/ggjava/resources/lib/ggutil-21.4.0.0.0.002.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "org.slf4j",
+                    "name": "slf4j-api",
+                    "version": "1.7.30",
+                    "artifacts": [
+                        {
+                            "name": "slf4j-api",
+                            "path": "/home/nnagarajan/.m2/repository/org/slf4j/slf4j-api/1.7.30/slf4j-api-1.7.30.jar"
+                        },
+                        {
+                            "name": "slf4j-api",
+                            "classifier": "sources",
+                            "path": "/home/nnagarajan/.m2/repository/org/slf4j/slf4j-api/1.7.30/slf4j-api-1.7.30-sources.jar"
+                        }
+                    ]
+                },
+                {
+                    "organization": "com.github.sbt",
+                    "name": "junit-interface",
+                    "version": "0.13.3",
+                    "artifacts": [
+                        {
+                            "name": "junit-interface",
+                            "classifier": "",
+                            "path": "/home/nnagarajan/.m2/repository/com/github/sbt/junit-interface/0.13.3/junit-interface-0.13.3.jar"
+                        }
+                    ]
+                }
+            ]
+        },
+        "tags": [
+            "test"
+        ]
+    }
+}

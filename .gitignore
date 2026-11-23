@@ -41,8 +41,4 @@ openspec/specs/.gitkeep
 openspec/changes/archive/.gitkeep
 openspec/changes/one-marker-per-source-transaction/.openspec.yaml
 openspec/config.yaml
-.metals/.reports/metals-full/2026-11-08/r_empty-definition_00-40-01-210.md
-.metals/metals.mv.db
-.metals/metals.log
-.metals/metals.lock.db
-target/gg-custom-formatters-1.0-SNAPSHOT.jar
+.metals/
