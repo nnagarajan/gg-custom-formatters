@@ -1,6 +1,6 @@
 # gg-custom-formatters
 ## Overview
-This repository contains custom formatters for Oracle GoldenGate that are inspired by the Debezium transaction metadata format. These formatters are designed to provide a structured representation of transactions, including commit sequence numbers (CSN), transaction IDs (XID), timestamps, and event counts.
+This repository contains `TransactionBoundaryEventJsonFormatter`, a custom formatter for the Oracle GoldenGate for Big Data Kafka handler, inspired by the Debezium transaction metadata format. For each source transaction in a Replicat delivery it publishes one marker with the transaction id (XID), commit sequence number (CSN), timestamp, whether the transaction is complete, and per table the operation count, key columns, each operation's key values and its trail position.
 
 ## Contract: one marker per source transaction per delivery
 
@@ -21,11 +21,11 @@ With `gg.handler.kafkahandler.mode=tx` the Kafka handler sends **one Kafka messa
 - `data_collections` lists tables (short names) in the order they first appear.
 - `tx_ts` is a string.
 
-**Consumers** must merge markers with the same `xid:csn` until one has `tx_complete: true`, and deduplicate operations by `pos` (after a Replicat restart an already published delivery can be sent again). Without `MAXTRANSOPS` every marker has `tx_complete: true`.
+**Consumers** must merge markers with the same `xid:csn` until one has `tx_complete: true`, and deduplicate operations by `pos` (after a Replicat restart an already published delivery can be sent again). Without `MAXTRANSOPS` every marker should have `tx_complete: true` (see **Verify on first use** under Replicat Settings).
 
 ## Message Format
 
-One source transaction (1 order with 1 detail row and 2 line items):
+One source transaction (1 order with 1 detail row and 2 line items, keys as in the sample key column file below):
 
 ```json
 {
@@ -45,8 +45,8 @@ One source transaction (1 order with 1 detail row and 2 line items):
     {
       "data_collection": "ORDER_DETAILS",
       "event_count": 1,
-      "key_columns": ["DETAIL_ID"],
-      "key_ids": [["9"]],
+      "key_columns": ["ORDER_ID", "DETAIL_ID"],
+      "key_ids": [["101", "9"]],
       "pos": ["00000000010000004587"]
     },
     {
@@ -159,21 +159,23 @@ Message size: a marker is about 200 bytes plus about 35–80 bytes per operation
 ## Configuration
 
 ### 1. Kafka Handler Integration
-To use the custom formatter with the GoldenGate Kafka handler, see the following property:
+To use the custom formatter with the GoldenGate Kafka handler, set the formatter class in the handler properties (`rep3.props`). The handler must run in transaction mode:
 ```properties
-gg.handler.kafkahandler.format=
+gg.handler.kafkahandler.format=com.technext.goldengate.dasource.formatter.TransactionBoundaryEventJsonFormatter
+gg.handler.kafkahandler.mode=tx
 ```
 ### 2. Custom Library Directory
-Create a directory for custom libraries and copy the required artifacts:
+Build the jar (`mvn clean package`, see Library location) and copy it to a directory for custom libraries:
 
-```properties
-/opt/oracle/ggbd/ggjava/resources/customlib
+```shell
+mkdir -p /opt/oracle/ggbd/ggjava/resources/customlib
+cp target/gg-custom-formatters-1.0-SNAPSHOT.jar /opt/oracle/ggbd/ggjava/resources/customlib/
 ```
 Update the classpath in your configuration as follows:
 
-````properties
-gg.classpath=gg.classpath=dirprm/:/var/lib/kafka/libs/*:/opt/oracle/ggmabd/home/opt/DependencyDownloader/dependencies/kafka_3.3.2/*:/opt/oracle/ggbd/ggjava/resources/customlib/*
-````
+```properties
+gg.classpath=dirprm/:/var/lib/kafka/libs/*:/opt/oracle/ggmabd/home/opt/DependencyDownloader/dependencies/kafka_3.3.2/*:/opt/oracle/ggbd/ggjava/resources/customlib/*
+```
 
 ### 3. Replicat Settings
 Below is an example of a replicat parameter files (`replicat.prm`):
@@ -196,24 +198,25 @@ MAP ORCLPDB.APPUSER.ORDER_LINE_ITEMS, TARGET APPUSER.ORDER_LINE_ITEMS;
 >
 > **Verify on first use:** `tx_complete` relies on Replicat marking each operation's position in its source transaction (`DsOperation.isLast()`). Before relying on it, run one split transaction and check that its markers say `false` ... `true` (not all `false`).
 
-Example Kafka handler properties ('.props''):
+Example Kafka handler properties (`rep3.props`):
 
 ```properties
 gg.handlerlist=kafkahandler
 gg.handler.kafkahandler.type=kafka
 gg.handler.kafkahandler.kafkaProducerConfigFile=kp.properties
-#The following resolves the topic name using the short table name
+#All markers go to one fixed topic
 gg.handler.kafkahandler.topicMappingTemplate=dev.transaction_metadata_json
 gg.handler.kafkahandler.mode=tx
 gg.handler.kafkahandler.transactionsEnabled=false
 gg.handler.kafkahandler.format=com.technext.goldengate.dasource.formatter.TransactionBoundaryEventJsonFormatter
+#Optional: key columns other than the primary key (see 4. Key Columns)
+gg.handler.kafkahandler.format.keyColumnsFile=dirprm/key_columns.properties
 #Sample gg.classpath for Apache Kafka
 gg.classpath=dirprm/:/var/lib/kafka/libs/*:/opt/oracle/ggmabd/home/opt/DependencyDownloader/dependencies/kafka_3.3.2/*:/opt/oracle/ggbd/ggjava/resources/customlib/*
-#Sample gg.classpath for HDP
 javawriter.stats.full=TRUE
 javawriter.stats.display=TRUE
 
-###KAFKA Properties file ###
+#Logging and JVM
 gg.log=log4j
 gg.log.level=debug
 gg.report.time=30sec
@@ -240,7 +243,7 @@ APPUSER.ORDER_LINE_ITEMS=ORDER_ID,LINE_NO
 - One line per table. Blank lines and lines starting with `#` or `!` are ignored.
 - Table and column names are matched case-insensitively. The table name is the delivered (target) `SCHEMA.TABLE`, as in the `MAP ... TARGET` clause.
 - Tables not in the file use their primary key. A table with neither a primary key nor an entry abends Replicat.
-- The file is read once at startup. A missing file or a malformed line (no `=`, empty or repeated column name, table listed twice) stops Replicat with an error naming the file and line. Restart rep3 after editing it.
+- The file is read once at startup. A missing or unreadable file stops Replicat with an error naming the file; a malformed line (no `=`, empty table or column name, repeated column, table listed twice) stops it with an error naming the file and line. Restart rep3 after editing it.
 - Every mapped column must be captured for updates as well as inserts, which needs supplemental logging on the source for those columns and their before images in the trail:
 
   ```
@@ -260,7 +263,8 @@ The formatter never writes a marker it cannot fill in exactly. In these cases it
 | A truncate reaches the formatter | `Unsupported operation DO_TRUNCATE on APPUSER.ORDERS pos=...: truncates must not be captured (GETTRUNCATES)` |
 | A mapped column does not exist in the table | `Key column file maps APPUSER.ORDER_LINE_ITEMS to [ORDER_ID, LINE_NUM], but APPUSER.ORDER_LINE_ITEMS has no column LINE_NUM` |
 | A table has no primary key and no mapping | `Table APPUSER.X has no primary key and no key column mapping; add it to the key column file (...)` |
-| The key column file is missing or malformed (at startup) | `Malformed key column file dirprm/key_columns.properties line 2: ...` |
+| The key column file is missing or unreadable (at startup) | `Cannot read key column file dirprm/key_columns.properties: ...` |
+| The key column file has a malformed line (at startup) | `Malformed key column file dirprm/key_columns.properties line 2: ...` |
 
 A mapped column that is nullable only logs a warning on first sight of the table (`Key column APPUSER.ORDER_LINE_ITEMS.LINE_NO is nullable; a NULL value in it will abend Replicat`).
 
@@ -364,7 +368,9 @@ Sample output:
 
 ### Example 3
 
-Pressure test with 150,000 updates to the same transaction
+Pressure test with 150,000 updates to the same transaction.
+
+> With `key_ids` and `pos`, a single marker for this transaction is about 5 MB (roughly 35 bytes per operation), which exceeds the default 1 MB Kafka message limit. Run it with `MAXTRANSOPS` set (for example `MAXTRANSOPS 10000`): the transaction is then delivered as 15 fragments of 10,000 operations (about 350 KB each), with `tx_complete: false` on the first 14 and `true` on the last. The output below is from before keys and positions were added.
 
 ```oracle
 SET TIMING ON;
@@ -422,9 +428,11 @@ Libraries required for building the project were retrieved manually from Oracle 
 /opt/oracle/ggbd/ggjava/resources/lib
 ```
 
+`pom.xml` reads them from that path (`lib.location`). Build with `mvn clean package`; the tests need no running GoldenGate.
+
 ## Known Issues
 
-- **NullPointerException in metaDataChangedEvent**
+- **NullPointerException in metaDataChangedEvent** (resolved): GoldenGate's `JsonFormatter.metaDataChanged` throws this when called on this formatter. The formatter overrides `metaDataChanged` without calling it (it only clears its cached key columns), so the error no longer occurs. The original log:
 
 ```shell
 ERROR 2025-07-07 22:08:48.000826 [main] - An exception occurred calling metaDataChanged in the formatter.                                                                                                         
