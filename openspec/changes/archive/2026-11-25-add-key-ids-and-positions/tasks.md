@@ -54,4 +54,14 @@ _Skipped by user decision. Most of its questions were answered on rep3 on 2026-1
 - [ ] 8.4 Measure the transaction size distribution (average, p99, max) from the topic with the README `jq` command, including the largest bulk affirm/confirm; set `MAXTRANSOPS` and the Kafka size limits from it.
 - [ ] 8.5 Ask the trading application team whether bulk affirm/confirm must be one database transaction or can commit in chunks.
 - [ ] 8.6 Consumer team: implement fragment merging and `pos` deduplication per the README Consumer Guide, including the whole-transaction replay case, before `MAXTRANSOPS` is enabled in production.
-- [ ] 8.7 Decide whether a hard marker size bound is required; if so, propose a custom handler change (design Decision 11).
+- [ ] 8.7 Decide whether a hard marker size bound is required; if so, propose a custom handler change (design Decision 11). Not needed for the recommended counts-only setup (design Decision 12).
+
+_Tasks 8.3–8.7 apply only to deployments that use keys, positions or `MAXTRANSOPS`._
+
+## 9. Recommended setup: counts only, no MAXTRANSOPS
+
+- [x] 9.1 Document the recommended setup in README (settings, measured size, consumer rules, limits), add a column to Caveats at a glance saying which caveats apply to it, add caveats 10 (rep3 and data Replicat must deliver the same operations) and 11 (rep3 down stops markers silently), remove `IGNOREDELETES` from the example Replicat parameters, set the example `rep3.props` to the recommended flags, and add a counts-only section to the Consumer Guide. Verify every JSON example parses and every internal link resolves.
+- [x] 9.2 Record the decision in design.md (Decision 12), proposal.md and the spec (scenario "Counts-only marker does not grow with the transaction"). Verify with `openspec validate add-key-ids-and-positions`.
+- [ ] 9.3 Add a unit test for the scenario "Counts-only marker does not grow with the transaction" (54,000 operations over three tables, both flags off). Verify with `mvn test`.
+- [ ] 9.4 On rep3: set `markerKeys=false` and `markerPos=false` (exact names), remove `MAXTRANSOPS 250` from `dirprm/rep3.prm`, confirm rep3 has no `IGNOREDELETES`/filters the data Replicat `kc` lacks, restart, and verify a marker has only `data_collection` and `event_count` per table and `tx_complete` true. Also record what rep3 does with a misspelt property such as `format.markerOps`.
+- [ ] 9.5 Consumer team: add a marker freshness or rep3 lag alert (caveat 11) next to the stuck-transaction alert.

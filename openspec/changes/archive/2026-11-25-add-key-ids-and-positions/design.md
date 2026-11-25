@@ -15,7 +15,7 @@ Facts from the GoldenGate for Big Data 21.4 jars (`/opt/oracle/ggbd/ggjava/resou
 - `JsonFormatter` exposes formatter options as setters (`setIncludePrimaryKeys`, `setIncludePosition`, ...), which GoldenGate binds from `gg.handler.<name>.format.<property>`.
 - `AbstractNgFormatter.init(DsConfiguration, DsMetaData)` (from `NgFormatter`) is the startup hook; it returns at once unless `metaColumnsTemplate` is set, so overriding it and calling `super.init` is safe.
 
-rep3 today: `GROUPTRANSOPS 1000`, `MAXTRANSOPS` commented out, `IGNOREDELETES`, MAP of three `APPUSER` tables.
+rep3 when this change started: `GROUPTRANSOPS 1000`, `MAXTRANSOPS` commented out, MAP of three `APPUSER` tables. (`IGNOREDELETES` appeared in the README example, not in the deployed rep3; it is removed from the example by Decision 12.) On 2026-11-24 the deployed rep3 had `MAXTRANSOPS 250` from testing; the recommended setup removes it.
 
 ## Goals / Non-Goals
 
@@ -58,6 +58,8 @@ rep3 today: `GROUPTRANSOPS 1000`, `MAXTRANSOPS` commented out, `IGNOREDELETES`, 
 
 11. **Replay after an abend is accepted, not prevented.** Researched: no Replicat parameter makes `MAXTRANSOPS` apply on recovery; `REPERROR` covers database apply errors, not Java handler exceptions; Oracle documents source-boundary replay for `GROUPTRANSOPS`/`BATCHSQL` errors. Splitting in the formatter was considered and rejected: in `mode=tx` the Kafka handler joins all formatter output of a delivery into one message (bytecode of `KafkaHandler.transactionCommit`); in `mode=op` the handler sends nothing for an operation with no output (`NgBAOSFormattedData.size()` is 0), but it never calls the formatter at commit, so operations held back would be lost if Replicat crashed after checkpointing them. *Alternative for a hard size bound:* a custom handler (`gg.handler.<name>.type=<class>`) that splits each delivery into markers of at most N operations and sends and flushes them before returning from `transactionCommit`; deferred until a hard bound is required.
 
+12. **Recommended deployment: counts only, no `MAXTRANSOPS`.** Decided after the size, replay and consumer analysis (2026-11-24). With `markerKeys=false` and `markerPos=false` a marker is about 300 bytes for three tables whatever the operation count (measured: 296 bytes for 5 operations, 312 for 54,000), so `MAXTRANSOPS` has nothing to bound, and leaving it unset removes fragments, the whole-transaction replay overlap (Decision 11) and the need for `pos` to deduplicate them: each `xid:csn` has exactly one marker, and a repeated one is a duplicate. Without key resolution the key-related abends and the key column file drop out. The consumer completes a transaction by counting distinct data messages per table (deduplicated by the data messages' own `pos`) against `event_count`, which the Spark consumer already does. The defaults stay `true` so the formatter's behavior does not change for existing deployments; the recommendation is documented, not enforced. *Alternatives considered:* keys with `MAXTRANSOPS` and a formatter-side key cap (`markerMaxKeys` with a `keys_omitted` flag) or a per-delivery `fragment` number; not built, because the counts-only setup removes the problem they address. Two operational requirements apply to every setup and are documented as caveats: rep3 and the data Replicat must deliver the same operations (a filter such as `IGNOREDELETES` on only one makes counts disagree, and a consumer waiting for them never completes); and while rep3 is down no markers arrive, so consumers need a marker freshness or Replicat lag alert in addition to a stuck-transaction alert.
+
 ## Risks / Trade-offs
 
 - [Consumer assumes one complete marker per `xid:csn`] → Deploy the jar with `MAXTRANSOPS` still unset (new fields are additive); set `MAXTRANSOPS` only after the Spark consumer merges by `xid:csn` until `tx_complete` and dedupes by `pos`.
@@ -74,6 +76,9 @@ rep3 today: `GROUPTRANSOPS 1000`, `MAXTRANSOPS` commented out, `IGNOREDELETES`, 
 - [Bulk actions (trade affirm/confirm) are single large transactions] → 50,000 trades ≈ 150,000 operations ≈ 6–12 MB as one marker on replay. `MAXTRANSOPS` 5,000–10,000 for normal running, Kafka limits sized for the largest bulk, and ask the application team whether bulk actions can commit in chunks.
 - [`max.request.size` is checked uncompressed] → Compression does not help the producer limit; README sizes it from measured marker sizes.
 - [Mapped `VERSION`-style column changes on update] → `key_ids` holds the new value; supplemental logging must include it or updates that do not set it abend as MISSING. Documented in README Key Columns.
+- [rep3 and the data Replicat deliver different operations (filters, `IGNOREDELETES`, different MAPs, repositioned separately)] → counts never match and a consumer waiting for them stalls. README caveat 10 and Replicat Settings; the example parameters no longer use `IGNOREDELETES`.
+- [rep3 down] → no markers, so a consumer's stuck-transaction alert never fires. README caveat 11: monitor rep3 or marker freshness.
+- [Misspelt flag property, for example `markerOps`] → the field stays on. README says to check the first marker after a restart. Whether GoldenGate warns about an unknown `format.*` property is not verified.
 - [Formatter INFO logs invisible with default GoldenGate logging] → README shows a `com.technext` logger for a custom log4j2 file.
 
 ## Observed on rep3 (2026-11-23)
@@ -93,10 +98,13 @@ GoldenGate for Big Data 21.4, `GROUPTRANSOPS 1000`, `MAXTRANSOPS 2`, three APPUS
 ## Migration Plan
 
 1. `mvn clean package`; copy the jar to `/opt/oracle/ggbd/ggjava/resources/customlib/`; optionally add `gg.handler.kafkahandler.format.keyColumnsFile=dirprm/key_columns.properties` and set `markerKeys` / `markerPos` (default both true); restart rep3 with `MAXTRANSOPS` still unset. Markers gain new fields only.
-2. After the consumer handles fragments, set `MAXTRANSOPS` in rep3 and restart.
-3. Rollback: unset `MAXTRANSOPS`, restore the previous jar, remove the formatter properties (`keyColumnsFile`, `markerKeys`, `markerPos`), restart rep3.
+2. Recommended: set `markerKeys=false` and `markerPos=false`, remove any `MAXTRANSOPS` line, restart rep3 (Decision 12).
+3. Only for deployments that need fragments: after the consumer handles them, set `MAXTRANSOPS` in rep3 (with `markerPos=true`) and restart.
+4. Rollback: unset `MAXTRANSOPS`, restore the previous jar, remove the formatter properties (`keyColumnsFile`, `markerKeys`, `markerPos`), restart rep3.
 
 ## Open Questions
+
+- How does GoldenGate 21.4 treat an unknown `format.*` property (ignore, warn or abend)? (task 9.4)
 
 - Production value of `MAXTRANSOPS` (sizing only; any value works with this design). README suggests 5,000–10,000.
 - After an abend with some fragments already committed, does Replicat resume in the middle of the transaction (and split the rest) or replay it whole? (task 8.3)

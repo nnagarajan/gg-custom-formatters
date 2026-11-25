@@ -197,6 +197,10 @@ The formatter SHALL read two boolean properties, `gg.handler.<name>.format.marke
 - **WHEN** `markerKeys=false` and `markerPos=false`
 - **THEN** each data collection entry has exactly `data_collection` and `event_count`
 
+#### Scenario: Counts-only marker does not grow with the transaction
+- **WHEN** `markerKeys=false`, `markerPos=false`, `MAXTRANSOPS` is unset, and one delivery holds a single source transaction of 54,000 operations over three tables
+- **THEN** one marker is written with `tx_complete` true and three data collection entries, each with exactly `data_collection` and `event_count`, and the counts sum to 54,000
+
 #### Scenario: Keys off skips key checks
 - **WHEN** `markerKeys=false` and an operation arrives for a table with no primary key and a NULL in the column that would be its key
 - **THEN** the marker is written with that operation's `pos`, and Replicat does not abend

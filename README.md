@@ -2,21 +2,61 @@
 ## Overview
 This repository contains `TransactionBoundaryEventJsonFormatter`, a custom formatter for the Oracle GoldenGate for Big Data Kafka handler, inspired by the Debezium transaction metadata format. For each source transaction in a Replicat delivery it publishes one marker with the transaction id (XID), commit sequence number (CSN), timestamp, whether the transaction is complete, and per table the operation count, key columns, each operation's key values and its trail position. The key fields and the positions can each be turned off (see Marker Fields).
 
+**Most teams should start with the [recommended setup](#recommended-setup-counts-only-no-maxtransops): counts only, no `MAXTRANSOPS`.** The key and position fields and `MAXTRANSOPS` support exist for consumers that need them, at the cost of the extra caveats below.
+
+## Recommended setup: counts only, no MAXTRANSOPS
+
+Turn off both per-operation fields and leave `MAXTRANSOPS` unset:
+
+```properties
+# rep3.props
+gg.handler.kafkahandler.format.markerKeys=false
+gg.handler.kafkahandler.format.markerPos=false
+```
+
+```shell
+-- rep3.prm: GROUPTRANSOPS as usual, no MAXTRANSOPS line
+GROUPTRANSOPS 1000
+```
+
+Each marker then holds `xid`, `csn`, `tx_ts`, `event_count`, `tx_complete` and per table `data_collection` and `event_count`:
+
+```json
+{"xid":"1342848513.10.13.112798","csn":"344880273","tx_ts":"2026-11-23 12:31:00.000000","event_count":5,"tx_complete":true,"data_collections":[{"data_collection":"ORDERS","event_count":1},{"data_collection":"ORDER_DETAILS","event_count":1},{"data_collection":"ORDER_LINE_ITEMS","event_count":3}]}
+```
+
+What this gives:
+
+- **Size does not depend on the transaction.** A marker is about 300 bytes for the three APPUSER tables (measured: 296 bytes for 5 operations, 312 bytes for 54,000). A Kafka message holds at most `GROUPTRANSOPS` markers (each transaction has at least one operation), so at `GROUPTRANSOPS 1000` it stays under about 300 KB. Default Kafka limits (1 MB) are enough; bulk transactions need no special sizing.
+- **One marker per source transaction.** Every marker has `tx_complete: true`. A replay after an abend is also one whole transaction with the same `xid:csn`, so a consumer recognizes it as a duplicate.
+- **Fewer reasons to abend.** No key resolution: tables need no primary key or key column file entry, and missing or NULL key values do not abend. The key column file is not read. A truncate or a Kafka send failure still abends.
+- **What the consumer does:** match a transaction's data messages by `xid:csn` and wait until each table's count of distinct data messages (deduplicated by the data messages' own `pos`) equals the marker's `event_count`. A repeated `xid:csn` is a duplicate. See [Consumer Guide](#consumer-guide).
+
+Limits:
+
+- The marker does not say *which* rows changed; the consumer learns that only from the data messages.
+- Replicat holds a whole source transaction in memory as one delivery (`mode=tx`); for very large transactions that is the main cost on the GoldenGate side, not the marker.
+- Property names must be exact: `markerKeys` and `markerPos`. A misspelt name (for example `markerOps`) does not turn the field off; check the first marker after restarting rep3.
+
+Choose keys, positions or `MAXTRANSOPS` only if a consumer needs per-row keys in the marker or a fixed bound on the size of each GoldenGate delivery; read the caveats below first.
+
 ## Caveats at a glance
 
-Teams deploying this formatter or consuming its topic should know these before going live. Details are in the linked sections.
+Teams deploying this formatter or consuming its topic should know these before going live. Details are in the linked sections. The last column says whether the caveat applies to the [recommended setup](#recommended-setup-counts-only-no-maxtransops) (`markerKeys=false`, `markerPos=false`, no `MAXTRANSOPS`).
 
-| # | Caveat | What to do |
-|---|---|---|
-| 1 | Kafka orders messages only within a partition. With no `keyMappingTemplate`, markers have a `null` key and can spread over partitions. | Fixed key or a 1-partition topic ([7. Kafka Producer Settings](#7-kafka-producer-settings)). |
-| 2 | A split transaction (`MAXTRANSOPS`) arrives as several markers with the same `xid:csn`; only the last has `tx_complete: true`. | Consumers merge by `xid:csn` until `tx_complete: true` ([Consumer Guide](#consumer-guide)). |
-| 3 | After an abend in the middle of a split transaction, Replicat replays it as **one whole delivery**. GoldenGate has no parameter to make `MAXTRANSOPS` apply to the replay. | Size Kafka limits for the largest source transaction; consumers deduplicate by `pos` ([3. Replicat Settings](#3-replicat-settings)). |
-| 4 | Markers can be sent again after a restart (at-least-once). | Deduplicate by `pos`; keep `markerPos=true` whenever `MAXTRANSOPS` is used ([Consumer Guide](#consumer-guide)). |
-| 5 | The producer checks `max.request.size` against the **uncompressed** marker. | Set it (and `buffer.memory`) above the largest whole-transaction marker ([Capacity Planning](#capacity-planning)). |
-| 6 | Bulk actions (for example traders affirming or confirming many trades at once) are single large transactions: 50,000 trades ≈ 150,000 operations ≈ 6–12 MB as one marker. | Use `MAXTRANSOPS`, size Kafka for the largest bulk, and ask whether the application can commit bulk actions in chunks ([Capacity Planning](#capacity-planning)). |
-| 7 | `key_ids` come from the after image. A key column that changes on update (such as `VERSION`) shows its **new** value. | Include such columns only if consumers match on them; log them with `ADD TRANDATA` ([5. Key Columns](#5-key-columns)). |
-| 8 | Any key problem (missing or NULL value, bad mapping), a truncate, or a Kafka send failure abends Replicat; nothing is published for that delivery. | Test the key column file before deploying; follow [6. Abend Rules and Recovery](#6-abend-rules-and-recovery). |
-| 9 | The formatter's INFO/DEBUG log lines do not appear in GoldenGate's default logging; only ERROR lines reach the report file. | Add a `com.technext` logger if you need them ([3. Replicat Settings](#3-replicat-settings)). |
+| # | Caveat | What to do | Recommended setup |
+|---|---|---|---|
+| 1 | Kafka orders messages only within a partition. With no `keyMappingTemplate`, markers have a `null` key and can spread over partitions. | Fixed key or a 1-partition topic ([7. Kafka Producer Settings](#7-kafka-producer-settings)). | Applies |
+| 2 | A split transaction (`MAXTRANSOPS`) arrives as several markers with the same `xid:csn`; only the last has `tx_complete: true`. | Consumers merge by `xid:csn` until `tx_complete: true` ([Consumer Guide](#consumer-guide)). | No: never split |
+| 3 | After an abend in the middle of a split transaction, Replicat replays it as **one whole delivery**. GoldenGate has no parameter to make `MAXTRANSOPS` apply to the replay. | Size Kafka limits for the largest source transaction; consumers deduplicate by `pos` ([3. Replicat Settings](#3-replicat-settings)). | No: every delivery is already whole |
+| 4 | Markers can be sent again after a restart (at-least-once). | Deduplicate by `pos`; keep `markerPos=true` whenever `MAXTRANSOPS` is used ([Consumer Guide](#consumer-guide)). | Applies: a repeated `xid:csn` is a duplicate |
+| 5 | The producer checks `max.request.size` against the **uncompressed** marker. | Set it (and `buffer.memory`) above the largest whole-transaction marker ([Capacity Planning](#capacity-planning)). | No: messages stay under ~300 KB |
+| 6 | Bulk actions (for example traders affirming or confirming many trades at once) are single large transactions: 50,000 trades ≈ 150,000 operations ≈ 6–12 MB as one marker. | Use `MAXTRANSOPS`, size Kafka for the largest bulk, and ask whether the application can commit bulk actions in chunks ([Capacity Planning](#capacity-planning)). | No for the marker (~300 bytes); the data messages and the consumer still see 150,000 operations |
+| 7 | `key_ids` come from the after image. A key column that changes on update (such as `VERSION`) shows its **new** value. | Include such columns only if consumers match on them; log them with `ADD TRANDATA` ([5. Key Columns](#5-key-columns)). | No: no keys |
+| 8 | Any key problem (missing or NULL value, bad mapping), a truncate, or a Kafka send failure abends Replicat; nothing is published for that delivery. | Test the key column file before deploying; follow [6. Abend Rules and Recovery](#6-abend-rules-and-recovery). | Truncates and Kafka failures only |
+| 9 | The formatter's INFO/DEBUG log lines do not appear in GoldenGate's default logging; only ERROR lines reach the report file. | Add a `com.technext` logger if you need them ([3. Replicat Settings](#3-replicat-settings)). | Applies |
+| 10 | Markers count what rep3 delivers; the data messages are what the data Replicat (for example `kc`) delivers. If the two differ (one has `IGNOREDELETES`, a `FILTER`/`WHERE`, a different `MAP`, or was repositioned with `ALTER REPLICAT ... BEGIN`/`EXTSEQNO`), counts never match and a consumer that waits for them waits forever. | Give rep3 and the data Replicat the same trail, table list and operation filters; reposition both together ([3. Replicat Settings](#3-replicat-settings)). | Applies |
+| 11 | While rep3 is stopped or abended, no markers are published. A consumer that only alerts on a transaction waiting for its data sees nothing wrong: output just stops. | Monitor rep3 itself (`INFO`/`LAG REPLICAT rep3`) or alert when no marker arrives for N minutes while data topics keep receiving messages. | Applies |
 
 ## Contract: one marker per source transaction per delivery
 
@@ -37,7 +77,7 @@ With `gg.handler.kafkahandler.mode=tx` the Kafka handler sends **one Kafka messa
 - `data_collections` lists tables (short names) in the order they first appear.
 - `tx_ts` is a string.
 
-**Consumers** must merge markers with the same `xid:csn` until one has `tx_complete: true`, and deduplicate operations by `pos` (after a Replicat restart an already published delivery can be sent again; with `markerPos=false` see 4. Marker Fields). Without `MAXTRANSOPS` every marker has `tx_complete: true`.
+**Consumers** must merge markers with the same `xid:csn` until one has `tx_complete: true`, and deduplicate operations by `pos` (after a Replicat restart an already published delivery can be sent again; with `markerPos=false` see 4. Marker Fields). Without `MAXTRANSOPS` (the recommended setup) every marker has `tx_complete: true`, each `xid:csn` has one marker, and a repeated `xid:csn` is a duplicate.
 
 After an abend, Replicat replays a split transaction as **one whole delivery**, so a consumer can receive some fragments (`tx_complete: false`) and then a single `tx_complete: true` marker that lists **all** the transaction's operations again, including those already received. Deduplicating by `pos` handles this; a consumer must not add `event_count`s of markers with the same `xid:csn` without deduplicating.
 
@@ -205,14 +245,17 @@ REPLICAT rep3
 TARGETDB LIBFILE libggjava.so SET property=/opt/oracle/ggbd/dirprm/rep3.props
 REPORTCOUNT EVERY 15 SECONDS, RATE
 GROUPTRANSOPS 1000
---MAXTRANSOPS 1000
-IGNOREDELETES
+-- No MAXTRANSOPS in the recommended setup (see below)
 MAP ORCLPDB.APPUSER.ORDERS, TARGET APPUSER.ORDERS;
 MAP ORCLPDB.APPUSER.ORDER_DETAILS, TARGET APPUSER.ORDER_DETAILS;
 MAP ORCLPDB.APPUSER.ORDER_LINE_ITEMS, TARGET APPUSER.ORDER_LINE_ITEMS;
 ```
 
-> **`MAXTRANSOPS` is supported.** It splits a large source transaction across deliveries; each fragment gets its own marker with `tx_complete: false` until the last one. It keeps every message within a fixed size (see Message Format), except after an abend (below).
+> **Same operations as the data Replicat.** Consumers compare each marker's counts with the data messages, which another Replicat (for example `kc`) publishes from the same trail. Both must deliver the same operations for these tables: no `IGNOREDELETES`, `IGNOREUPDATES`, `FILTER` or `WHERE` on one but not the other, and the same tables mapped. Reposition them together (`ALTER REPLICAT ... BEGIN`/`EXTSEQNO`). A difference leaves a consumer waiting for operations that never arrive, or receiving more than the marker declares. A `COLMAP` on rep3 is fine: it changes columns, not operations.
+>
+> **`MAXTRANSOPS` is supported but not recommended.** The recommended setup (counts only) leaves it unset: markers stay small whatever the transaction size, so there is nothing to bound. Use it only together with `markerPos=true` and a consumer that merges fragments; the rest of this note applies to that case.
+>
+> It splits a large source transaction across deliveries; each fragment gets its own marker with `tx_complete: false` until the last one. It keeps every message within a fixed size (see Message Format), except after an abend (below).
 >
 > **Abend while a split transaction is in progress:** on restart, Replicat replays the interrupted source transaction as **one** delivery; `MAXTRANSOPS` is not applied to it. Observed on rep3 (`GROUPTRANSOPS 1000`, `MAXTRANSOPS 2`): a 550-operation transaction was delivered in fragments of 2 (`state=MIDDLE`), the formatter abended on the first one, and after the restart the same transaction arrived as one delivery (`ops=550, state=WHOLE`) and was published as a single marker with `tx_complete: true`. Two consequences:
 > - The replayed marker can be as large as the whole transaction. Size the Kafka limits (`max.request.size`, topic `max.message.bytes`, consumer fetch sizes) for the largest source transaction you expect, not for `MAXTRANSOPS`; otherwise the replay itself fails with a record-too-large error.
@@ -250,11 +293,11 @@ gg.handler.kafkahandler.keyMappingTemplate=transaction_metadata
 gg.handler.kafkahandler.mode=tx
 gg.handler.kafkahandler.transactionsEnabled=false
 gg.handler.kafkahandler.format=com.technext.goldengate.dasource.formatter.TransactionBoundaryEventJsonFormatter
-#Optional: marker fields, both true by default (see 4. Marker Fields)
-gg.handler.kafkahandler.format.markerKeys=true
-gg.handler.kafkahandler.format.markerPos=true
-#Optional: key columns other than the primary key (see 5. Key Columns)
-gg.handler.kafkahandler.format.keyColumnsFile=dirprm/key_columns.properties
+#Marker fields: counts only (recommended setup); both default to true (see 4. Marker Fields)
+gg.handler.kafkahandler.format.markerKeys=false
+gg.handler.kafkahandler.format.markerPos=false
+#Only with markerKeys=true: key columns other than the primary key (see 5. Key Columns)
+#gg.handler.kafkahandler.format.keyColumnsFile=dirprm/key_columns.properties
 #Sample gg.classpath for Apache Kafka
 gg.classpath=dirprm/:/var/lib/kafka/libs/*:/opt/oracle/ggmabd/home/opt/DependencyDownloader/dependencies/kafka_3.3.2/*:/opt/oracle/ggbd/ggjava/resources/customlib/*
 javawriter.stats.full=TRUE
@@ -269,7 +312,7 @@ jvm.bootoptions=-Xms4g -Xmx6g
 ```
 ### 4. Marker Fields
 
-Teams can choose which per-operation fields the markers carry: keys, positions, or both (the default).
+Teams can choose which per-operation fields the markers carry: keys, positions, both (the default), or neither. Neither, without `MAXTRANSOPS`, is the [recommended setup](#recommended-setup-counts-only-no-maxtransops).
 
 | Property | Default | `false` leaves out |
 |---|---|---|
@@ -293,6 +336,7 @@ gg.handler.kafkahandler.format.markerPos=true
 - With `markerKeys=false` the formatter does not resolve keys at all: tables need no primary key or key column file entry, missing or NULL key values do not abend, and the key column file is not read, even if `keyColumnsFile` is set (a missing or malformed file then does not stop Replicat). Truncates still abend.
 - Values are `true` or `false`, case-insensitive. Any other value stops Replicat at startup (`Invalid value for format.markerKeys: 'no' (expected true or false)`).
 - Without `pos`, consumers cannot deduplicate a delivery that is sent again after a Replicat restart. Without `MAXTRANSOPS` each `xid:csn` has one marker, so a repeated `xid:csn` is a duplicate. **With `MAXTRANSOPS`, keep `markerPos=true`**: fragments of one transaction share its `xid:csn`, so without `pos` a re-sent fragment cannot be told apart from the next one, and a whole-transaction replay after an abend cannot be reconciled with the fragments already received.
+- The names are exact. A misspelt property (for example `markerOps`) does not set either flag, so that field stays on; check the first marker after restarting rep3.
 - Read at startup; restart rep3 after changing them. Changing them changes the marker shape, so update consumers first.
 
 Positions only (`markerKeys=false`), same transaction as the first Message Format example:
@@ -410,6 +454,17 @@ linger.ms=0
 
 ## Consumer Guide
 
+### Counts only, no MAXTRANSOPS (recommended setup)
+
+Each source transaction has exactly one marker, with `tx_complete: true`, so there is nothing to merge:
+
+- **Completeness.** A transaction is complete when, for each table in `data_collections`, the consumer holds `event_count` distinct data messages with that `xid:csn`. Deduplicate data messages by their own `pos` (the data Replicat writes it on every message; it is independent of `markerPos`). More data messages than declared means rep3 and the data Replicat deliver different operations (caveat 10): stop and investigate rather than emit.
+- **Duplicate markers.** After a rep3 restart a marker, or a whole grouped message, can arrive again. Its `xid:csn` is then already known: ignore it. Markers arrive in commit order on one partition, so a consumer can keep the last completed `csn` (compared as a number) plus the `xid`s completed at that `csn`, and drop any marker at or below it; two transactions can commit with the same `csn`, which is why the `xid` is kept.
+- **Order.** Emit transactions in marker order (Kafka offset, then position in a grouped message), which is commit order. Data topics are not ordered relative to the marker topic; wait for counts, not for arrival time.
+- **Stuck transactions.** A transaction whose data never completes (data Replicat down or lagging, a data message dropped as unusable, caveat 10) holds back every later one if the consumer emits in strict order. Alert when one has waited longer than normal bulk-load lag (for example 10–30 minutes), and alert separately when no marker arrives at all (caveat 11).
+
+### Keys, positions or MAXTRANSOPS
+
 **Completeness.** Collect markers by `xid:csn` until one has `tx_complete: true`. Fragments arrive in order on one partition (see 7. Kafka Producer Settings), and Replicat never skips a fragment it has not published, so at that point every operation of the transaction has been received. Only committed transactions reach the trail, so each fragment is already committed data; if the business does not need to act on a transaction as a whole, fragments can be processed as they arrive.
 
 **Duplicates.** They come from Replicat restarts (a fragment or delivery sent again) and from the whole-transaction replay after an abend (one `tx_complete: true` marker that repeats operations already received). Producer retries do not cause duplicates when idempotence is on. Deduplicate by `pos`:
@@ -432,7 +487,7 @@ linger.ms=0
 - Do **not** deduplicate by `xid:csn` (every fragment shares it), `event_count` (a replay counts more), or `key_ids` (one row changed twice has one key and two positions).
 - The watermark only holds within one trail. If Replicat is moved to a different or re-created trail, positions restart and the watermark must be reset; a safer alternative is a set of seen `xid:csn`+`pos` kept for a retention window.
 - Matching markers to data messages by `pos` works only if the data messages come from the same trail (`dirdat/e4` for rep3).
-- With `markerPos=false` none of this is possible; then run without `MAXTRANSOPS` and treat a repeated `xid:csn` as a duplicate, accepting that a replay of a grouped delivery cannot be detected.
+- With `markerPos=false` none of this is possible; then run without `MAXTRANSOPS` and treat a repeated `xid:csn` as a duplicate (see the counts-only section above). A replayed grouped message is detected the same way, marker by marker.
 
 ## Capacity Planning
 
@@ -448,6 +503,8 @@ Sizes below were measured on generated markers with the shape rep3 produces (key
 | true | false | ~0.95 MB | ~140 KB |
 | false | true | ~1.2 MB | ~190 KB |
 | false | false | ~0.4 KB | — |
+
+**Counts only** (`markerKeys=false`, `markerPos=false`): about 300 bytes per marker for the three APPUSER tables, whatever the operation count (measured 296 bytes for 5 operations, 312 bytes for 54,000), plus about 50 bytes per additional table. At `GROUPTRANSOPS 1000` a Kafka message holds at most 1,000 markers, about 300 KB. For 3.5 million operations per day this is about 200 MB/day uncompressed with small (one-order) transactions and about 2 MB/day with transactions of 100 orders or more.
 
 **Daily volume for 3.5 million operations**, keys and positions on:
 
