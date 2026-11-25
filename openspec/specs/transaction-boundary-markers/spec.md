@@ -72,14 +72,14 @@ The formatter SHALL write the delivery's message only when formatting the delive
 - **THEN** the output contains exactly one JSON value (object or array) describing the whole delivery
 
 ### Requirement: Marker shape compatibility
-Marker objects SHALL keep the existing field names `xid`, `csn`, `tx_ts`, `event_count`, `data_collections`, `data_collection`. Each marker object SHALL have exactly the fields `xid`, `csn`, `tx_ts`, `event_count`, `tx_complete` and `data_collections`, and each data collection entry SHALL have exactly `data_collection`, `event_count`, `key_columns`, `key_ids` and `pos` when both marker field flags are on (the default); see "Selectable marker fields" for the other combinations.
+Marker objects SHALL keep the existing field names `xid`, `csn`, `tx_ts`, `event_count`, `data_collections`, `data_collection`. Each marker object SHALL have exactly the fields `xid`, `csn`, `tx_ts`, `event_count`, `tx_complete` and `data_collections`, and each data collection entry SHALL have exactly `data_collection`, `event_count`, `key_columns`, `key_ids` and `pos` when both marker field flags are on (both are off by default); see "Selectable marker fields" for the other combinations.
 
 #### Scenario: Grouped marker fields
-- **WHEN** a grouped delivery produces an array of markers with default settings
+- **WHEN** a grouped delivery produces an array of markers with `markerKeys=true` and `markerPos=true`
 - **THEN** every marker object has exactly the fields `xid`, `csn`, `tx_ts`, `event_count`, `tx_complete` and `data_collections`, and every data collection entry has exactly `data_collection`, `event_count`, `key_columns`, `key_ids` and `pos`
 
 ### Requirement: Key columns per data collection
-When `markerKeys` is true (the default), each data collection entry SHALL have `key_columns`: a JSON array of the table's key column names, in key order. The key columns SHALL be the table's entry in the key column file when it has one, otherwise the table's primary key columns from GoldenGate metadata.
+When `markerKeys` is true, each data collection entry SHALL have `key_columns`: a JSON array of the table's key column names, in key order. The key columns SHALL be the table's entry in the key column file when it has one, otherwise the table's primary key columns from GoldenGate metadata.
 
 #### Scenario: Primary key from metadata
 - **WHEN** table APPUSER.ORDERS has primary key ORDER_ID and no key column file entry
@@ -90,7 +90,7 @@ When `markerKeys` is true (the default), each data collection entry SHALL have `
 - **THEN** its data collection has `key_columns` ["ORDER_ID","LINE_NO"]
 
 ### Requirement: Key values per operation
-When `markerKeys` is true (the default), each data collection entry SHALL have `key_ids`: one JSON array per operation on that table in the marker, in trail order. Each inner array SHALL hold the operation's key values as strings, in `key_columns` order, including when there is only one key column. Inserts and updates SHALL use the after value, falling back to the before value; deletes SHALL use the before value.
+When `markerKeys` is true, each data collection entry SHALL have `key_ids`: one JSON array per operation on that table in the marker, in trail order. Each inner array SHALL hold the operation's key values as strings, in `key_columns` order, including when there is only one key column. Inserts and updates SHALL use the after value, falling back to the before value; deletes SHALL use the before value.
 
 #### Scenario: Composite key
 - **WHEN** a marker holds inserts on ORDER_LINE_ITEMS for keys (101, A) then (102, B), with `key_columns` ["ORDER_ID","LINE_NO"]
@@ -117,7 +117,7 @@ When `markerKeys` is true (the default), each data collection entry SHALL have `
 - **THEN** `key_ids` contains ["101"] twice, once per operation
 
 ### Requirement: Trail position per operation
-When `markerPos` is true (the default), each data collection entry SHALL have `pos`: one string per operation on that table in the marker, holding the operation's 20-digit trail position (10-digit trail sequence number followed by 10-digit byte offset), in the same order as `key_ids`. Each of `key_ids` and `pos` that is present SHALL have as many entries as the entry's `event_count`. Positions SHALL be in trail order within an entry, and markers within a message SHALL be in trail order, so that a consumer reading one partition sees positions of different transactions in increasing order.
+When `markerPos` is true, each data collection entry SHALL have `pos`: one string per operation on that table in the marker, holding the operation's 20-digit trail position (10-digit trail sequence number followed by 10-digit byte offset), in the same order as `key_ids`. Each of `key_ids` and `pos` that is present SHALL have as many entries as the entry's `event_count`. Positions SHALL be in trail order within an entry, and markers within a message SHALL be in trail order, so that a consumer reading one partition sees positions of different transactions in increasing order.
 
 #### Scenario: Positions align with keys
 - **WHEN** a marker holds ORDERS operations for ORDER_ID 101 at trail sequence 1, offset 4321, then ORDER_ID 102 at offset 4587
@@ -170,14 +170,14 @@ The formatter SHALL accept an optional key column file, named by a formatter pro
 - **THEN** the formatter does not read the file, starts normally, and writes markers
 
 ### Requirement: Abend on missing key value
-When `markerKeys` is true (the default) and any key column of an operation is absent from both its before and after images (or from the before image of a delete), the formatter SHALL fail and Replicat SHALL abend without writing the message. The error SHALL name the table, column, operation type and trail position, and SHALL say the value is missing.
+When `markerKeys` is true and any key column of an operation is absent from both its before and after images (or from the before image of a delete), the formatter SHALL fail and Replicat SHALL abend without writing the message. The error SHALL name the table, column, operation type and trail position, and SHALL say the value is missing.
 
 #### Scenario: Compressed update without a mapped column
 - **WHEN** an update on ORDER_LINE_ITEMS at position 00000000010000004587 carries no LINE_NO value in either image
 - **THEN** Replicat abends with an error naming ORDER_LINE_ITEMS, LINE_NO, the update operation, position 00000000010000004587 and "missing"
 
 ### Requirement: Abend on NULL key value
-When `markerKeys` is true (the default) and any key column of an operation has a NULL value, the formatter SHALL fail and Replicat SHALL abend without writing the message. The error SHALL name the table, column, operation type and trail position, and SHALL say the value is NULL.
+When `markerKeys` is true and any key column of an operation has a NULL value, the formatter SHALL fail and Replicat SHALL abend without writing the message. The error SHALL name the table, column, operation type and trail position, and SHALL say the value is NULL.
 
 #### Scenario: NULL in a mapped business key
 - **WHEN** an insert on ORDER_LINE_ITEMS has LINE_NO NULL
@@ -191,7 +191,7 @@ When a delivery contains a truncate operation, whatever the marker field flags, 
 - **THEN** Replicat abends with an error naming APPUSER.ORDERS and stating truncates must not be captured
 
 ### Requirement: Abend on unresolvable key definition
-When `markerKeys` is true (the default) and the formatter first sees a table, it SHALL fail and Replicat SHALL abend if a column in the table's key column file entry does not exist in the table, or if the table has no primary key and no key column file entry.
+When `markerKeys` is true and the formatter first sees a table, it SHALL fail and Replicat SHALL abend if a column in the table's key column file entry does not exist in the table, or if the table has no primary key and no key column file entry.
 
 #### Scenario: Mapped column does not exist
 - **WHEN** the key column file maps APPUSER.ORDER_LINE_ITEMS to ORDER_ID,LINE_NUM and the table has no column LINE_NUM
@@ -202,14 +202,14 @@ When `markerKeys` is true (the default) and the formatter first sees a table, it
 - **THEN** Replicat abends with an error naming the table and saying it needs a key column mapping
 
 ### Requirement: Warning for nullable mapped columns
-When `markerKeys` is true (the default) and the formatter first sees a table whose key column file entry includes a nullable column, it SHALL log a warning naming the table and column, and SHALL continue.
+When `markerKeys` is true and the formatter first sees a table whose key column file entry includes a nullable column, it SHALL log a warning naming the table and column, and SHALL continue.
 
 #### Scenario: Nullable business key column
 - **WHEN** the key column file maps APPUSER.ORDER_LINE_ITEMS to ORDER_ID,LINE_NO and LINE_NO is nullable
 - **THEN** a WARN is logged naming APPUSER.ORDER_LINE_ITEMS and LINE_NO, and markers are still written
 
 ### Requirement: Selectable marker fields
-The formatter SHALL read two boolean properties, `gg.handler.<name>.format.markerKeys` and `gg.handler.<name>.format.markerPos`, both defaulting to `true`. When `markerKeys` is `false`, data collection entries SHALL omit `key_columns` and `key_ids`, and the formatter SHALL NOT resolve keys, SHALL NOT read the key column file, so the key-related abends (missing or NULL key value, unresolvable key definition, unreadable key column file) do not apply; truncates SHALL still abend. When `markerPos` is `false`, entries SHALL omit `pos`. Marker-level fields and each entry's `data_collection` and `event_count` SHALL always be present. Values SHALL be `true` or `false`, case-insensitive and trimmed; any other value SHALL fail at startup with an error naming the property.
+The formatter SHALL read two boolean properties, `gg.handler.<name>.format.markerKeys` and `gg.handler.<name>.format.markerPos`, both defaulting to `false`. When `markerKeys` is `false`, data collection entries SHALL omit `key_columns` and `key_ids`, and the formatter SHALL NOT resolve keys, SHALL NOT read the key column file, so the key-related abends (missing or NULL key value, unresolvable key definition, unreadable key column file) do not apply; truncates SHALL still abend. When `markerPos` is `false`, entries SHALL omit `pos`. Marker-level fields and each entry's `data_collection` and `event_count` SHALL always be present. Values SHALL be `true` or `false`, case-insensitive and trimmed; any other value SHALL fail at startup with an error naming the property.
 
 #### Scenario: Positions only
 - **WHEN** `markerKeys=false` and `markerPos=true`

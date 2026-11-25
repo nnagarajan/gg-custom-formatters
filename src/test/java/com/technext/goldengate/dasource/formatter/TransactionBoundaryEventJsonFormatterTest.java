@@ -56,8 +56,15 @@ public class TransactionBoundaryEventJsonFormatterTest {
 
     @Before
     public void setUp() {
-        formatter = new TransactionBoundaryEventJsonFormatter();
+        formatter = keysAndPos(new TransactionBoundaryEventJsonFormatter());
         seqno = 0;
+    }
+
+    /** Most tests check keys and positions, which are off by default. */
+    private static TransactionBoundaryEventJsonFormatter keysAndPos(TransactionBoundaryEventJsonFormatter f) {
+        f.setMarkerKeys("true");
+        f.setMarkerPos("true");
+        return f;
     }
 
     // ---- single source transaction: unchanged output ----
@@ -469,7 +476,7 @@ public class TransactionBoundaryEventJsonFormatterTest {
     @Test
     public void nullableMappedColumnLogsAWarningAndContinues() throws IOException {
         List<String> warnings = new ArrayList<>();
-        formatter = new TransactionBoundaryEventJsonFormatter(warnings::add);
+        formatter = keysAndPos(new TransactionBoundaryEventJsonFormatter(warnings::add));
         formatter.setKeyColumnsFile(keyFile("APPUSER.ORDER_LINE_ITEMS=ORDER_ID,LINE_NO"));
         TableMetaData meta = meta(ITEM_COLS, new HashSet<>(Arrays.asList("LINE_NO")), "LINE_ITEM_ID");
         List<DsOperation> ops = new ArrayList<>();
@@ -668,7 +675,19 @@ public class TransactionBoundaryEventJsonFormatterTest {
     }
 
     @Test
-    public void keysAndPosAreOnByDefault() {
+    public void keysAndPosAreOffByDefault() {
+        formatter = new TransactionBoundaryEventJsonFormatter();
+
+        JsonObject marker = twoOrders();
+        JsonObject dc = collection(marker, "ORDERS");
+
+        assertEquals(MARKER_FIELDS, marker.keySet());
+        assertEquals(new HashSet<>(Arrays.asList("data_collection", "event_count")), dc.keySet());
+        assertEquals(2, dc.getInt("event_count"));
+    }
+
+    @Test
+    public void bothTrueAddsKeysAndPos() {
         JsonObject dc = collection(twoOrders(), "ORDERS");
 
         assertEquals(json("[['101'],['102']]"), dc.getJsonArray("key_ids"));

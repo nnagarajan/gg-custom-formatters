@@ -53,15 +53,16 @@ import java.util.function.Consumer;
  *
  * <p>Keys come from {@link KeyColumnResolver}. Any operation whose key cannot be produced makes
  * {@link #formatOp} throw before anything is written, so Replicat abends. The {@code markerKeys} and
- * {@code markerPos} properties turn the key fields and the {@code pos} field off independently.
+ * {@code markerPos} properties turn the key fields and the {@code pos} field on independently; both
+ * are off by default, so a marker carries only counts unless they are set to true.
  */
 public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
 
     private static final Logger logger = LoggerFactory.getLogger(TransactionBoundaryEventJsonFormatter.class);
 
     private final KeyColumnResolver keys;
-    private boolean includeKeys = true;
-    private boolean includePos = true;
+    private boolean includeKeys = false;
+    private boolean includePos = false;
     private String keyColumnsFile;
     private boolean keyColumnsLoaded;
 
@@ -115,7 +116,7 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
     }
 
     /**
-     * Bound from {@code gg.handler.<name>.format.markerKeys} ({@code true} by default). {@code false}
+     * Bound from {@code gg.handler.<name>.format.markerKeys} ({@code false} by default). {@code false}
      * leaves {@code key_columns} and {@code key_ids} out of the markers and skips key resolution, so
      * tables need no primary key or key column mapping and missing or NULL key values do not abend.
      */
@@ -124,7 +125,7 @@ public class TransactionBoundaryEventJsonFormatter extends JsonFormatter {
     }
 
     /**
-     * Bound from {@code gg.handler.<name>.format.markerPos} ({@code true} by default). {@code false}
+     * Bound from {@code gg.handler.<name>.format.markerPos} ({@code false} by default). {@code false}
      * leaves {@code pos} out of the markers.
      */
     public void setMarkerPos(String value) {

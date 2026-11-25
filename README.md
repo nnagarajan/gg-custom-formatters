@@ -6,7 +6,7 @@ This repository contains `TransactionBoundaryEventJsonFormatter`, a custom forma
 
 ## Recommended setup: counts only, no MAXTRANSOPS
 
-Turn off both per-operation fields and leave `MAXTRANSOPS` unset:
+Leave both per-operation fields off (the default since this change; setting them to `false` explicitly makes the intent visible) and leave `MAXTRANSOPS` unset:
 
 ```properties
 # rep3.props
@@ -36,7 +36,7 @@ Limits:
 
 - The marker does not say *which* rows changed; the consumer learns that only from the data messages.
 - Replicat holds a whole source transaction in memory as one delivery (`mode=tx`); for very large transactions that is the main cost on the GoldenGate side, not the marker.
-- Property names must be exact: `markerKeys` and `markerPos`. A misspelt name (for example `markerOps`) does not turn the field off; check the first marker after restarting rep3.
+- Property names must be exact: `markerKeys` and `markerPos`. A misspelt name (for example `markerOps`) is ignored and the field keeps its default (off); check the first marker after restarting rep3.
 
 Choose keys, positions or `MAXTRANSOPS` only if a consumer needs per-row keys in the marker or a fixed bound on the size of each GoldenGate delivery; read the caveats below first.
 
@@ -49,7 +49,7 @@ Teams deploying this formatter or consuming its topic should know these before g
 | 1 | Kafka orders messages only within a partition. With no `keyMappingTemplate`, markers have a `null` key and can spread over partitions. | Fixed key or a 1-partition topic ([7. Kafka Producer Settings](#7-kafka-producer-settings)). | Applies |
 | 2 | A split transaction (`MAXTRANSOPS`) arrives as several markers with the same `xid:csn`; only the last has `tx_complete: true`. | Consumers merge by `xid:csn` until `tx_complete: true` ([Consumer Guide](#consumer-guide)). | No: never split |
 | 3 | After an abend in the middle of a split transaction, Replicat replays it as **one whole delivery**. GoldenGate has no parameter to make `MAXTRANSOPS` apply to the replay. | Size Kafka limits for the largest source transaction; consumers deduplicate by `pos` ([3. Replicat Settings](#3-replicat-settings)). | No: every delivery is already whole |
-| 4 | Markers can be sent again after a restart (at-least-once). | Deduplicate by `pos`; keep `markerPos=true` whenever `MAXTRANSOPS` is used ([Consumer Guide](#consumer-guide)). | Applies: a repeated `xid:csn` is a duplicate |
+| 4 | Markers can be sent again after a restart (at-least-once). | Deduplicate by `pos`; set `markerPos=true` whenever `MAXTRANSOPS` is used ([Consumer Guide](#consumer-guide)). | Applies: a repeated `xid:csn` is a duplicate |
 | 5 | The producer checks `max.request.size` against the **uncompressed** marker. | Set it (and `buffer.memory`) above the largest whole-transaction marker ([Capacity Planning](#capacity-planning)). | No: messages stay under ~300 KB |
 | 6 | Bulk actions (for example traders affirming or confirming many trades at once) are single large transactions: 50,000 trades ≈ 150,000 operations ≈ 6–12 MB as one marker. | Use `MAXTRANSOPS`, size Kafka for the largest bulk, and ask whether the application can commit bulk actions in chunks ([Capacity Planning](#capacity-planning)). | No for the marker (~300 bytes); the data messages and the consumer still see 150,000 operations |
 | 7 | `key_ids` come from the after image. A key column that changes on update (such as `VERSION`) shows its **new** value. | Include such columns only if consumers match on them; log them with `ADD TRANDATA` ([5. Key Columns](#5-key-columns)). | No: no keys |
@@ -83,7 +83,7 @@ After an abend, Replicat replays a split transaction as **one whole delivery**, 
 
 ## Message Format
 
-Examples below use the default settings (`markerKeys=true`, `markerPos=true`); see 4. Marker Fields for the other shapes.
+Examples below use `markerKeys=true` and `markerPos=true` (both off by default); see 4. Marker Fields for the other shapes.
 
 One source transaction (1 order with 1 detail row and 2 line items, keys as in the sample key column file below):
 
@@ -259,7 +259,7 @@ MAP ORCLPDB.APPUSER.ORDER_LINE_ITEMS, TARGET APPUSER.ORDER_LINE_ITEMS;
 >
 > **Abend while a split transaction is in progress:** on restart, Replicat replays the interrupted source transaction as **one** delivery; `MAXTRANSOPS` is not applied to it. Observed on rep3 (`GROUPTRANSOPS 1000`, `MAXTRANSOPS 2`): a 550-operation transaction was delivered in fragments of 2 (`state=MIDDLE`), the formatter abended on the first one, and after the restart the same transaction arrived as one delivery (`ops=550, state=WHOLE`) and was published as a single marker with `tx_complete: true`. Two consequences:
 > - The replayed marker can be as large as the whole transaction. Size the Kafka limits (`max.request.size`, topic `max.message.bytes`, consumer fetch sizes) for the largest source transaction you expect, not for `MAXTRANSOPS`; otherwise the replay itself fails with a record-too-large error.
-> - Its operations can overlap fragments already published before the abend. Consumers deduplicate by `pos` (keep `markerPos=true`).
+> - Its operations can overlap fragments already published before the abend. Consumers deduplicate by `pos` (set `markerPos=true`).
 >
 > **No GoldenGate setting changes this.** The Oracle documentation has no Replicat parameter that makes `MAXTRANSOPS` apply on recovery. `REPERROR` (`TRANSABORT`, `RETRYOP`, ...) governs database apply errors; a formatter exception is a Java error (`OGG-15051`) and always abends. For `GROUPTRANSOPS`/`BATCHSQL`, Oracle documents that Replicat replays a failing transaction "using the same transaction boundaries as the source transaction", which matches what rep3 does. Splitting inside the formatter is not possible either: in `mode=tx` the Kafka handler sends one message per delivery, and in `mode=op` the formatter is never told where Replicat checkpoints, so holding operations back would lose them on a crash. A guaranteed size bound would need a custom handler that splits each delivery itself before Replicat checkpoints. Not yet tested: whether a restart after some fragments were already committed resumes in the middle of the transaction or replays it whole.
 >
@@ -293,7 +293,7 @@ gg.handler.kafkahandler.keyMappingTemplate=transaction_metadata
 gg.handler.kafkahandler.mode=tx
 gg.handler.kafkahandler.transactionsEnabled=false
 gg.handler.kafkahandler.format=com.technext.goldengate.dasource.formatter.TransactionBoundaryEventJsonFormatter
-#Marker fields: counts only (recommended setup); both default to true (see 4. Marker Fields)
+#Marker fields: counts only (recommended setup); both default to false (see 4. Marker Fields)
 gg.handler.kafkahandler.format.markerKeys=false
 gg.handler.kafkahandler.format.markerPos=false
 #Only with markerKeys=true: key columns other than the primary key (see 5. Key Columns)
@@ -312,12 +312,12 @@ jvm.bootoptions=-Xms4g -Xmx6g
 ```
 ### 4. Marker Fields
 
-Teams can choose which per-operation fields the markers carry: keys, positions, both (the default), or neither. Neither, without `MAXTRANSOPS`, is the [recommended setup](#recommended-setup-counts-only-no-maxtransops).
+Teams can choose which per-operation fields the markers carry: keys, positions, both, or neither (the default). Neither, without `MAXTRANSOPS`, is the [recommended setup](#recommended-setup-counts-only-no-maxtransops).
 
-| Property | Default | `false` leaves out |
+| Property | Default | `true` adds |
 |---|---|---|
-| `gg.handler.kafkahandler.format.markerKeys` | `true` | `key_columns` and `key_ids` |
-| `gg.handler.kafkahandler.format.markerPos` | `true` | `pos` |
+| `gg.handler.kafkahandler.format.markerKeys` | `false` | `key_columns` and `key_ids` |
+| `gg.handler.kafkahandler.format.markerPos` | `false` | `pos` |
 
 ```properties
 #Positions only
@@ -335,7 +335,7 @@ gg.handler.kafkahandler.format.markerPos=true
 - Turned-off fields are left out, not written as empty arrays. The marker-level fields (`xid`, `csn`, `tx_ts`, `event_count`, `tx_complete`, `data_collections`) are always present.
 - With `markerKeys=false` the formatter does not resolve keys at all: tables need no primary key or key column file entry, missing or NULL key values do not abend, and the key column file is not read, even if `keyColumnsFile` is set (a missing or malformed file then does not stop Replicat). Truncates still abend.
 - Values are `true` or `false`, case-insensitive. Any other value stops Replicat at startup (`Invalid value for format.markerKeys: 'no' (expected true or false)`).
-- Without `pos`, consumers cannot deduplicate a delivery that is sent again after a Replicat restart. Without `MAXTRANSOPS` each `xid:csn` has one marker, so a repeated `xid:csn` is a duplicate. **With `MAXTRANSOPS`, keep `markerPos=true`**: fragments of one transaction share its `xid:csn`, so without `pos` a re-sent fragment cannot be told apart from the next one, and a whole-transaction replay after an abend cannot be reconciled with the fragments already received.
+- Without `pos`, consumers cannot deduplicate a delivery that is sent again after a Replicat restart. Without `MAXTRANSOPS` each `xid:csn` has one marker, so a repeated `xid:csn` is a duplicate. **With `MAXTRANSOPS`, set `markerPos=true`**: fragments of one transaction share its `xid:csn`, so without `pos` a re-sent fragment cannot be told apart from the next one, and a whole-transaction replay after an abend cannot be reconciled with the fragments already received.
 - The names are exact. A misspelt property (for example `markerOps`) does not set either flag, so that field stays on; check the first marker after restarting rep3.
 - Read at startup; restart rep3 after changing them. Changing them changes the marker shape, so update consumers first.
 
@@ -358,7 +358,7 @@ Positions only (`markerKeys=false`), same transaction as the first Message Forma
 
 ### 5. Key Columns
 
-Applies when `markerKeys=true` (the default).
+Applies when `markerKeys=true` (off by default).
 
 By default each table's `key_columns` is its primary key from GoldenGate metadata. To use other columns (for example a business key, or a table without a primary key), point the formatter to a key column file:
 
@@ -540,7 +540,7 @@ jq -s 'group_by(.k) | map(map(.n)|add) | sort | {txs:length, avg:(add/length), m
 
 ## Testing
 
-> The sample outputs below were recorded before `key_columns`, `key_ids` and `pos` existed. They match the shape with `markerKeys=false` and `markerPos=false`. With the default settings each `data_collections` entry also carries those three fields, with one `key_ids` and one `pos` entry per operation (for example 50 each for `ORDERS` in Example 1).
+> The sample outputs below were recorded before `key_columns`, `key_ids` and `pos` existed. They match the default shape (`markerKeys=false`, `markerPos=false`). With both flags set to `true` each `data_collections` entry also carries those three fields, with one `key_ids` and one `pos` entry per operation (for example 50 each for `ORDERS` in Example 1).
 
 ### Example 1
 
